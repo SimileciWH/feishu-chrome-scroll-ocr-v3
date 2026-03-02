@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font-family: Arial, sans-serif; width: 320px; padding: 10px; }
+      button { width: 100%; margin: 6px 0; padding: 8px; }
+      input, textarea { width: 100%; box-sizing: border-box; margin-top: 4px; }
+      .muted { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h3>Feishu Scroll OCR</h3>
+    <label>OCR.Space API Key (optional)</label>
+    <input id="apiKey" placeholder="helloworld or your key" />
+    <button id="save">Save Settings</button>
+    <button id="pick">1) Select Region</button>
+    <button id="run">2) Capture + Extract</button>
+    <div class="muted" id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
