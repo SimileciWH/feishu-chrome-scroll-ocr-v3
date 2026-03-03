@@ -1,0 +1,17 @@
+{
+  "estimated_total_chars": 8688,
+  "captured_chars": 8688,
+  "coverage_ratio": 1.0,
+  "lines": 72,
+  "chars": 8688,
+  "elapsed_ms": 1800,
+  "stop_signals": [
+    "bottom_hit>=3",
+    "text_growth_zero>=3",
+    "paragraph_hash_no_new>=3"
+  ],
+  "raw_chars": 8688,
+  "saved_chars": 8688,
+  "diff_chars": 0,
+  "same_prefix_len": 8688
+}
