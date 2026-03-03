@@ -1,0 +1,15 @@
+{
+  "estimated_total_chars": 8000,
+  "captured_chars": 4120,
+  "coverage_ratio": 0.515,
+  "lines": 36,
+  "chars": 4120,
+  "elapsed_ms": null,
+  "stop_signals": [
+    "bottom_hit>=3",
+    "text_growth_zero>=3",
+    "paragraph_hash_no_new>=3"
+  ],
+  "status": "blocked",
+  "reason": "current captured chars below 8000 due browser extraction serialization truncation"
+}
