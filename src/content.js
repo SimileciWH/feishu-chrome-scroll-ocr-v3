@@ -2,268 +2,247 @@ let selectedRect = null;
 let overlay = null;
 
 const CONFIG = {
-  scroll: {
-    maxIterations: 140,
-    minStep: 220,
-    stepRatio: 0.82,
-    maxStableRounds: 3,
-  },
-  wait: {
-    idleMs: 450,
-    stableMaxWaitMs: 2800,
-    sampleEveryMs: 220,
-    stableRounds: 3,
-  },
-  ocr: {
-    endpoint: 'https://api.ocr.space/parse/image',
-    retry: 2,
-    lowConfidenceMinLen: 24,
-    lowConfidenceAsciiRatio: 0.12,
+  scroll: { maxIterations: 160, minStep: 220, stepRatio: 0.82, maxStableRounds: 4 },
+  wait: { idleMs: 450, stableMaxWaitMs: 3200, sampleEveryMs: 220, stableRounds: 3 },
+  ocr: { endpoint: 'https://api.ocr.space/parse/image', retry: 2 }
+};
+
+const U = {
+  sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+  norm: (s) => (s || '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim()
+};
+
+async function progress(text, level = 'info', extra = {}) {
+  try { await chrome.runtime.sendMessage({ type: 'PROGRESS', text, level, extra }); } catch (_) {}
+  toast(text, level);
+}
+
+function toast(text, level = 'info') {
+  const id = 'fso-toast';
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:10px 12px;border-radius:8px;font-size:12px;max-width:320px;box-shadow:0 2px 10px rgba(0,0,0,.2);';
+    document.body.appendChild(el);
   }
-};
+  el.style.background = level === 'error' ? '#b00020' : '#1f2937';
+  el.style.color = '#fff';
+  el.textContent = `Feishu OCR: ${text}`;
+}
 
-const Util = {
-  sleep(ms) { return new Promise(r => setTimeout(r, ms)); },
-  normalizeBlock(s) { return (s || '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim(); },
-  nowIso() { return new Date().toISOString(); },
-};
+function findScrollContainer() {
+  const cands = [...document.querySelectorAll('*')].filter(el => {
+    const st = getComputedStyle(el);
+    return /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 120;
+  });
+  return cands.sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0] || document.scrollingElement;
+}
 
-const UI = {
-  makeOverlay() {
-    const o = document.createElement('div');
-    o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;background:rgba(0,0,0,0.05)';
-    document.body.appendChild(o);
-    return o;
-  },
-  rectFromPoints(a, b) {
-    const left = Math.min(a.x, b.x), top = Math.min(a.y, b.y);
-    return { left, top, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
-  },
-  pickRegion() {
-    if (overlay) overlay.remove();
-    overlay = UI.makeOverlay();
-    let start = null;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;border:2px solid #4f9fff;background:rgba(79,159,255,0.2);pointer-events:none;z-index:2147483647';
-    overlay.appendChild(box);
+function rectFromPoints(a, b) {
+  const left = Math.min(a.x,b.x), top = Math.min(a.y,b.y);
+  return { left, top, width: Math.abs(a.x-b.x), height: Math.abs(a.y-b.y) };
+}
 
-    overlay.onmousedown = (e) => { start = { x: e.clientX, y: e.clientY }; };
-    overlay.onmousemove = (e) => {
-      if (!start) return;
-      const r = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
-      Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+function startPickRegion() {
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;background:rgba(59,130,246,0.08)';
+  document.body.appendChild(overlay);
+  progress('选区模式已开启，请拖拽框选正文区域');
+
+  let start = null;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;border:2px solid #3b82f6;background:rgba(59,130,246,0.18);pointer-events:none;z-index:2147483647';
+  overlay.appendChild(box);
+
+  overlay.onmousedown = (e) => { start = { x: e.clientX, y: e.clientY }; };
+  overlay.onmousemove = (e) => {
+    if (!start) return;
+    const r = rectFromPoints(start, { x: e.clientX, y: e.clientY });
+    Object.assign(box.style, { left:`${r.left}px`, top:`${r.top}px`, width:`${r.width}px`, height:`${r.height}px` });
+  };
+  overlay.onmouseup = (e) => {
+    if (!start) return;
+    selectedRect = rectFromPoints(start, { x: e.clientX, y: e.clientY });
+    overlay.remove(); overlay = null;
+    progress(`选区已确认：${Math.round(selectedRect.width)}x${Math.round(selectedRect.height)}`);
+  };
+}
+
+async function waitStableWindow() {
+  await U.sleep(CONFIG.wait.idleMs);
+  const start = Date.now();
+  let stable = 0;
+  let prevLen = (document.body?.innerText || '').length;
+  while (Date.now() - start < CONFIG.wait.stableMaxWaitMs) {
+    await U.sleep(CONFIG.wait.sampleEveryMs);
+    const nowLen = (document.body?.innerText || '').length;
+    if (Math.abs(nowLen - prevLen) <= 2) stable++; else stable = 0;
+    prevLen = nowLen;
+    if (stable >= CONFIG.wait.stableRounds) return true;
+  }
+  return false;
+}
+
+function extractDomTextInRect(rect) {
+  const nodes = [...document.querySelectorAll('p, div, span, h1, h2, h3, li')];
+  const out = [];
+  for (const n of nodes) {
+    const t = U.norm(n.innerText);
+    if (!t || t.length < 2) continue;
+    const r = n.getBoundingClientRect();
+    const overlap = !(r.right < rect.left || r.left > rect.left + rect.width || r.bottom < rect.top || r.top > rect.top + rect.height);
+    if (overlap) out.push(t);
+  }
+  return out;
+}
+
+function dedupeHighConfidence(blocks) {
+  const seen = new Set();
+  const out = [];
+  for (const b of blocks) {
+    const n = U.norm(b);
+    const key = n.length >= 20 ? n : `short:${b}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(b);
+  }
+  return out;
+}
+
+async function cropDataUrl(dataUrl, rect) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = rect.width; c.height = rect.height;
+      c.getContext('2d').drawImage(img, rect.left, rect.top, rect.width, rect.height, 0, 0, rect.width, rect.height);
+      resolve(c.toDataURL('image/png'));
     };
-    overlay.onmouseup = (e) => {
-      if (!start) return;
-      selectedRect = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
-      overlay.remove();
-      overlay = null;
-      alert('Region selected. Open extension popup and click "Capture + Extract".');
-    };
-  }
-};
+    img.src = dataUrl;
+  });
+}
 
-const Scroll = {
-  findContainer() {
-    const candidates = [...document.querySelectorAll('*')].filter(el => {
-      const st = getComputedStyle(el);
-      return /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 120;
-    });
-    return candidates.sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0] || document.scrollingElement;
-  },
-  async waitStableWindow() {
-    await Util.sleep(CONFIG.wait.idleMs); // idle threshold
-    const start = Date.now();
-    let stable = 0;
-    let prevLen = (document.body?.innerText || '').length;
-    while (Date.now() - start < CONFIG.wait.stableMaxWaitMs) {
-      await Util.sleep(CONFIG.wait.sampleEveryMs);
-      const nowLen = (document.body?.innerText || '').length;
-      if (Math.abs(nowLen - prevLen) <= 2) stable += 1;
-      else stable = 0;
-      prevLen = nowLen;
-      if (stable >= CONFIG.wait.stableRounds) return true;
-    }
-    return false;
-  }
-};
+async function ocrSpace(base64, apiKey, language = 'chs') {
+  const form = new FormData();
+  form.append('base64Image', base64);
+  form.append('language', language);
+  form.append('isOverlayRequired', 'false');
+  const res = await fetch(CONFIG.ocr.endpoint, { method: 'POST', headers: { apikey: apiKey || 'helloworld' }, body: form });
+  const json = await res.json();
+  return (json?.ParsedResults || []).map(x => x.ParsedText || '').join('\n').trim();
+}
 
-const TextLayer = {
-  extractInRect(rect) {
-    const nodes = [...document.querySelectorAll('p, div, span, h1, h2, h3, li')];
-    const out = [];
-    for (const n of nodes) {
-      const t = Util.normalizeBlock(n.innerText || '');
-      if (!t || t.length < 2) continue;
-      const r = n.getBoundingClientRect();
-      const overlap = !(r.right < rect.left || r.left > rect.left + rect.width || r.bottom < rect.top || r.top > rect.top + rect.height);
-      if (overlap) out.push(t);
-    }
-    return out;
-  },
-  dedupe(blocks) {
-    const seen = new Set();
-    const out = [];
-    for (const b of blocks) {
-      const n = Util.normalizeBlock(b);
-      const key = n.length >= 20 ? n : `short:${b}`; // only high-confidence duplicate drop
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(b);
-    }
-    return out;
-  }
-};
-
-const OCR = {
-  cropDataUrl(dataUrl, rect) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = rect.width;
-        c.height = rect.height;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, rect.left, rect.top, rect.width, rect.height, 0, 0, rect.width, rect.height);
-        resolve(c.toDataURL('image/png'));
-      };
-      img.src = dataUrl;
-    });
-  },
-  inferLang(domBlocks) {
-    const s = domBlocks.join('\n').slice(0, 2000);
-    const cn = (s.match(/[\u4e00-\u9fff]/g) || []).length;
-    const en = (s.match(/[A-Za-z]/g) || []).length;
-    // OCR.Space: chs best for Chinese-heavy; eng for English-heavy
-    return cn >= en ? 'chs' : 'eng';
-  },
-  async parseWithLang(imageBase64, apiKey, language) {
-    const form = new FormData();
-    form.append('base64Image', imageBase64);
-    form.append('language', language);
-    form.append('isOverlayRequired', 'false');
-    const res = await fetch(CONFIG.ocr.endpoint, {
-      method: 'POST',
-      headers: { apikey: apiKey || 'helloworld' },
-      body: form,
-    });
-    const json = await res.json();
-    return (json?.ParsedResults || []).map(x => x.ParsedText || '').join('\n').trim();
-  },
-  lowConfidence(text) {
-    const t = Util.normalizeBlock(text);
-    if (!t) return true;
-    const ascii = (t.match(/[A-Za-z0-9]/g) || []).length;
-    const ratio = ascii / Math.max(1, t.length);
-    return t.length < CONFIG.ocr.lowConfidenceMinLen || ratio < CONFIG.ocr.lowConfidenceAsciiRatio;
-  },
-  async extractWithRetry(imageBase64, apiKey, primaryLang) {
-    let best = '';
-    let tried = 0;
-    const langs = primaryLang === 'chs' ? ['chs', 'eng'] : ['eng', 'chs'];
-    for (const lang of langs) {
-      for (let i = 0; i < CONFIG.ocr.retry; i += 1) {
-        tried += 1;
-        try {
-          const text = await OCR.parseWithLang(imageBase64, apiKey, lang);
-          if (text.length > best.length) best = text;
-          if (!OCR.lowConfidence(text)) return { text, lang, tried, lowConfidence: false };
-        } catch (_) {}
-        await Util.sleep(380);
-      }
-    }
-    return { text: best, lang: langs[0], tried, lowConfidence: OCR.lowConfidence(best) };
-  }
-};
+function likelyLowConfidence(text) {
+  const t = U.norm(text);
+  return !t || t.length < 24;
+}
 
 async function runCaptureExtract() {
-  if (!selectedRect) {
-    alert('Please select region first.');
-    return;
-  }
+  if (!selectedRect) throw new Error('未选择区域，请先点击 Select Region');
 
-  const startedAtMs = Date.now();
-  const scroller = Scroll.findContainer();
+  const started = Date.now();
+  const scroller = findScrollContainer();
   const { ocrApiKey } = await chrome.storage.local.get(['ocrApiKey']);
+
+  await progress('准备中：初始化滚动与提取策略');
 
   const domBlocksRaw = [];
   const ocrBlocksRaw = [];
-  const meta = {
-    started_at: Util.nowIso(),
-    strategy: 'text-layer-first + OCR-fallback + low-confidence-rerecognize',
-    language_policy: 'infer from text layer, fallback to both chs/eng when low-confidence',
-    iterations: 0,
-    ocr_calls: 0,
-    low_confidence_hits: 0,
-  };
-
   const startTop = scroller.scrollTop;
   const step = Math.max(CONFIG.scroll.minStep, Math.floor(selectedRect.height * CONFIG.scroll.stepRatio));
 
   let noProgressRounds = 0;
-  let lastTop = -1;
   let prevHeight = scroller.scrollHeight;
+  let lastTextTotal = 0;
+  let bottomHitRounds = 0;
+  let iterations = 0;
 
-  for (let i = 0; i < CONFIG.scroll.maxIterations; i += 1) {
-    meta.iterations += 1;
+  for (let i = 0; i < CONFIG.scroll.maxIterations; i++) {
+    iterations++;
+    await progress(`滚动中：第 ${iterations} 屏`, 'info', { stage: 'scroll' });
+    await waitStableWindow();
 
-    await Scroll.waitStableWindow();
+    const pageBlocks = extractDomTextInRect(selectedRect);
+    domBlocksRaw.push(...pageBlocks);
+    const textTotal = domBlocksRaw.join('\n').length;
 
-    // text-layer first
-    const pageDomBlocks = TextLayer.extractInRect(selectedRect);
-    domBlocksRaw.push(...pageDomBlocks);
-
-    // OCR fallback per viewport
     try {
       const cap = await chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE' });
       if (cap?.ok) {
-        const cropped = await OCR.cropDataUrl(cap.dataUrl, selectedRect);
-        const lang = OCR.inferLang(pageDomBlocks);
-        const o = await OCR.extractWithRetry(cropped, ocrApiKey, lang);
-        meta.ocr_calls += o.tried;
-        if (o.lowConfidence) meta.low_confidence_hits += 1;
-        if (o.text) ocrBlocksRaw.push(o.text);
+        const cropped = await cropDataUrl(cap.dataUrl, selectedRect);
+        let o = await ocrSpace(cropped, ocrApiKey, 'chs');
+        if (likelyLowConfidence(o)) o = await ocrSpace(cropped, ocrApiKey, 'eng');
+        if (o) ocrBlocksRaw.push(o);
       }
     } catch (_) {}
 
     const currentTop = scroller.scrollTop;
-    const nextTop = Math.min(currentTop + step, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+    const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const nextTop = Math.min(currentTop + step, maxTop);
     scroller.scrollTop = nextTop;
 
     const heightStable = Math.abs(scroller.scrollHeight - prevHeight) < 4;
-    if (nextTop <= currentTop + 1 && currentTop === lastTop) noProgressRounds += 1;
-    else noProgressRounds = 0;
+    const textGrowthSmall = (textTotal - lastTextTotal) < 30;
+    const hitBottom = nextTop >= maxTop - 2;
 
-    // NOT fixed wait-only stop: require no-progress + stable height window
-    if (noProgressRounds >= CONFIG.scroll.maxStableRounds && heightStable) break;
+    if (nextTop <= currentTop + 1) noProgressRounds++; else noProgressRounds = 0;
+    if (hitBottom) bottomHitRounds++; else bottomHitRounds = 0;
+
+    // 多信号终止：高度稳定 + 文本增量小 + 底部命中重复 + 无位移
+    if (heightStable && textGrowthSmall && bottomHitRounds >= 2 && noProgressRounds >= 2) break;
 
     prevHeight = scroller.scrollHeight;
-    lastTop = currentTop;
+    lastTextTotal = textTotal;
   }
 
   scroller.scrollTop = startTop;
 
-  const domBlocks = TextLayer.dedupe(domBlocksRaw);
-  const ocrBlocks = TextLayer.dedupe(ocrBlocksRaw);
+  await progress('识别中：融合文本与OCR结果');
+  const domBlocks = dedupeHighConfidence(domBlocksRaw);
+  const ocrBlocks = dedupeHighConfidence(ocrBlocksRaw);
+  const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+
   const merged = [
     '# DOM Extract (primary)',
     ...domBlocks,
     '',
-    '# OCR Extract (supplement)',
+    '# OCR Extract (fallback)',
     ...ocrBlocks,
+    '',
+    '# META',
+    `iterations=${iterations}`,
+    `elapsed_seconds=${elapsed}`,
+    `dom_blocks=${domBlocks.length}`,
+    `ocr_blocks=${ocrBlocks.length}`
   ].join('\n');
 
-  meta.elapsed_seconds = Number(((Date.now() - startedAtMs) / 1000).toFixed(1));
-  meta.dom_blocks = domBlocks.length;
-  meta.ocr_blocks = ocrBlocks.length;
+  const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+  const saved = await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: merged, filename });
+  if (!saved?.ok) throw new Error(saved?.error || '保存失败');
 
-  const footer = `\n\n# META\n${JSON.stringify(meta, null, 2)}`;
-  const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-  await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: merged + footer, filename });
-  alert(`Done. TXT saved via download. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
+  await progress(`完成：已导出 ${filename}`);
+  return { ok: true, message: `提取完成（${iterations} 屏，${elapsed}s）`, filename };
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'START_PICK_REGION') UI.pickRegion();
-  if (msg?.type === 'RUN_CAPTURE_EXTRACT') runCaptureExtract();
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  (async () => {
+    if (msg?.type === 'PING') {
+      return sendResponse({ ok: true, message: 'content ready', href: location.href, hasRegion: !!selectedRect });
+    }
+    if (msg?.type === 'START_PICK_REGION') {
+      startPickRegion();
+      return sendResponse({ ok: true, message: '已进入选区模式（页面出现蓝色遮罩）' });
+    }
+    if (msg?.type === 'RUN_CAPTURE_EXTRACT') {
+      const r = await runCaptureExtract();
+      return sendResponse(r);
+    }
+    return sendResponse({ ok: false, error: `unknown message: ${msg?.type}` });
+  })().catch(async (e) => {
+    await progress(`错误：${String(e.message || e)}`, 'error');
+    sendResponse({ ok: false, error: String(e.message || e) });
+  });
+  return true;
 });
