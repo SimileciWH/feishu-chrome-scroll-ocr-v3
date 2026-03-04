@@ -80,10 +80,12 @@ const UI = {
       <button id="feishu-ocr-cancel-btn" style="margin-left:4px;padding:4px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
       <div style="margin-top:8px;font-size:11px;color:#666;">Enter WxH to resize from center • Drag center to move</div>
     `;
-    // Position panel below the box
+    // Position panel in the center of the box (not at edge)
     const boxRect = box.getBoundingClientRect();
-    panel.style.left = `${boxRect.left}px`;
-    panel.style.top = `${boxRect.bottom + 10}px`;
+    const panelWidth = 280; // approximate width
+    const panelHeight = 80; // approximate height
+    panel.style.left = `${boxRect.left + (boxRect.width - panelWidth) / 2}px`;
+    panel.style.top = `${boxRect.top + (boxRect.height - panelHeight) / 2}px`;
     return panel;
   },
 
