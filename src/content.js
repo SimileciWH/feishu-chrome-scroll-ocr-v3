@@ -345,6 +345,11 @@ const OCR = {
 };
 
 async function runCaptureExtract() {
+  // Send initial status to popup
+  try {
+    chrome.runtime.sendMessage({ type: 'EXTRACT_PROGRESS', progress: 'starting', iteration: 0 });
+  } catch (e) {}
+
   // Try to restore from localStorage if not set
   if (!selectedRect) {
     try {
@@ -391,6 +396,16 @@ async function runCaptureExtract() {
 
   for (let i = 0; i < CONFIG.scroll.maxIterations; i += 1) {
     meta.iterations += 1;
+    
+    // Send progress update
+    try {
+      chrome.runtime.sendMessage({ 
+        type: 'EXTRACT_PROGRESS', 
+        progress: 'scrolling',
+        iteration: i,
+        message: `Scrolling... (${i + 1})`
+      });
+    } catch (e) {}
 
     await Scroll.waitStableWindow();
 
@@ -462,6 +477,16 @@ async function runCaptureExtract() {
   if (boxToRemove) boxToRemove.remove();
   if (overlayToRemove) overlayToRemove.remove();
   if (labelToRemove) labelToRemove.remove();
+  
+  // Send completion signal to popup
+  try {
+    chrome.runtime.sendMessage({ 
+      type: 'EXTRACT_PROGRESS', 
+      progress: 'done',
+      iterations: meta.iterations,
+      message: `Done! ${meta.iterations} iterations`
+    });
+  } catch (e) {}
   
   alert(`Done! Text extracted. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }

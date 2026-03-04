@@ -183,3 +183,16 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+// Listen for progress updates from content script
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'EXTRACT_PROGRESS') {
+    if (msg.progress === 'starting') {
+      setStatus('Starting extraction...');
+    } else if (msg.progress === 'scrolling') {
+      setStatus(msg.message || 'Scrolling...');
+    } else if (msg.progress === 'done') {
+      setStatus('Extraction complete!');
+    }
+  }
+});
