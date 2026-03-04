@@ -59,32 +59,31 @@ async function sendToActiveTab(type) {
     const url = tab.url || '';
     const supported = url.includes('feishu.cn') || url.includes('docs.feishu.cn');
     if (!supported) {
-      throw new Error('This extension only works on Feishu pages. Please open a Feishu doc or wiki.');
+      setStatus('Only works on Feishu pages', true);
+      return;
     }
 
     // ping first to make error visible instead of silent failure
     const ping = await safeSendMessage(tab.id, { type: 'PING', windowId });
     if (!ping.ok) {
-      const errMsg = String(ping.error || 'Unknown connection error');
-      throw new Error(errMsg + ' | Try: (1) Reload the page, (2) Reload the extension');
+      const errMsg = (ping.error && ping.error.message) ? ping.error.message : String(ping.error || 'Connection failed');
+      setStatus('Content script not ready. Reload page + extension.', true);
+      return;
     }
 
     const sent = await safeSendMessage(tab.id, { type, windowId });
     if (!sent.ok) {
-      throw new Error(String(sent.error || 'Unknown send error'));
+      const errMsg = (sent.error && sent.error.message) ? sent.error.message : String(sent.error || 'Send failed');
+      setStatus('Send failed: ' + errMsg, true);
+      return;
     }
 
     setStatus(type === 'START_PICK_REGION' ? 'Region mode started' : 'Capture task started');
     setTimeout(() => window.close(), 800);
-  } catch (e) {
-    console.error('[popup] sendToActiveTab error:', e);
-    const msg = String(e?.message || e || 'Unknown error');
-    // More user-friendly error message
-    if (msg.includes('Content script not loaded') || msg.includes('receiving end')) {
-      setStatus('⚠️ Content script not ready. Reload page + extension.', true);
-    } else {
-      setStatus(`Error: ${msg}`, true);
-    }
+  } catch (err) {
+    console.error('[popup] sendToActiveTab error:', err);
+    const errMsg = (err && err.message) ? err.message : (err ? String(err) : 'Unknown error');
+    setStatus('Error: ' + errMsg, true);
   }
 }
 
