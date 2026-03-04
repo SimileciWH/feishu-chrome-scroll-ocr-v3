@@ -1,5 +1,6 @@
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'CAPTURE_VISIBLE') {
+    // captureVisibleTab already returns a data URL, pass it directly
     const windowId = msg.windowId ?? sender.tab?.windowId;
     chrome.tabs.captureVisibleTab(windowId, { format: 'png' })
       .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
