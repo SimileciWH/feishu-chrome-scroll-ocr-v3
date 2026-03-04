@@ -31,34 +31,184 @@ const Util = {
 const UI = {
   makeOverlay() {
     const o = document.createElement('div');
-    o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;background:rgba(0,0,0,0.05)';
+    o.id = 'feishu-ocr-overlay';
+    o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.3)';
     document.body.appendChild(o);
     return o;
   },
-  rectFromPoints(a, b) {
-    const left = Math.min(a.x, b.x), top = Math.min(a.y, b.y);
-    return { left, top, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+
+  makeRegionBox(defaultW = 800, defaultH = 600) {
+    const box = document.createElement('div');
+    box.id = 'feishu-ocr-region-box';
+    box.style.cssText = `
+      position: fixed;
+      border: 2px solid #ff0000;
+      background: rgba(255, 0, 0, 0.1);
+      z-index: 2147483647;
+      overflow: hidden;
+      min-width: 100px;
+      min-height: 50px;
+    `;
+    // Center the box
+    const centerX = (window.innerWidth - defaultW) / 2;
+    const centerY = (window.innerHeight - defaultH) / 2;
+    box.style.left = `${Math.max(0, centerX)}px`;
+    box.style.top = `${Math.max(0, centerY)}px`;
+    box.style.width = `${defaultW}px`;
+    box.style.height = `${defaultH}px`;
+    return box;
   },
+
+  makeControlPanel(box) {
+    const panel = document.createElement('div');
+    panel.id = 'feishu-ocr-control-panel';
+    panel.style.cssText = `
+      position: fixed;
+      z-index: 2147483648;
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+    `;
+    panel.innerHTML = `
+      <div style="margin-bottom:8px;font-weight:bold;color:#333;">📐 Region Size</div>
+      <input type="text" id="feishu-ocr-size-input" placeholder="800x600" value="${box.style.width.replace('px','')}x${box.style.height.replace('px','')}"
+        style="width:100px;padding:4px;border:1px solid #ccc;border-radius:4px;">
+      <button id="feishu-ocr-confirm-btn" style="margin-left:8px;padding:4px 12px;background:#4f9fff;color:white;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
+      <button id="feishu-ocr-cancel-btn" style="margin-left:4px;padding:4px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+      <div style="margin-top:8px;font-size:11px;color:#666;">Enter WxH to resize from center • Drag center to move</div>
+    `;
+    // Position panel below the box
+    const boxRect = box.getBoundingClientRect();
+    panel.style.left = `${boxRect.left}px`;
+    panel.style.top = `${boxRect.bottom + 10}px`;
+    return panel;
+  },
+
+  makeDraggable(box, panel) {
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+
+    // Drag to move
+    box.addEventListener('mousedown', (e) => {
+      if (e.target === box || e.target.style.cursor === 'move') {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = parseInt(box.style.left, 10);
+        startTop = parseInt(box.style.top, 10);
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, startLeft + dx));
+      let newTop = Math.max(0, Math.min(window.innerHeight - box.offsetHeight, startTop + dy));
+      box.style.left = `${newLeft}px`;
+      box.style.top = `${newTop}px`;
+      // Update panel position
+      panel.style.left = `${newLeft}px`;
+      panel.style.top = `${newTop + box.offsetHeight + 10}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+  },
+
   pickRegion() {
     if (overlay) overlay.remove();
     overlay = UI.makeOverlay();
-    let start = null;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;border:2px solid #4f9fff;background:rgba(79,159,255,0.2);pointer-events:none;z-index:2147483647';
+    
+    const defaultW = 800, defaultH = 600;
+    const box = UI.makeRegionBox(defaultW, defaultH);
     overlay.appendChild(box);
 
-    overlay.onmousedown = (e) => { start = { x: e.clientX, y: e.clientY }; };
-    overlay.onmousemove = (e) => {
-      if (!start) return;
-      const r = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
-      Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    const panel = UI.makeControlPanel(box);
+    document.body.appendChild(panel);
+    UI.makeDraggable(box, panel);
+
+    const sizeInput = document.getElementById('feishu-ocr-size-input');
+    const confirmBtn = document.getElementById('feishu-ocr-confirm-btn');
+    const cancelBtn = document.getElementById('feishu-ocr-cancel-btn');
+
+    // Store current center for center-aligned resizing
+    const getBoxCenter = () => ({
+      x: parseInt(box.style.left, 10) + box.offsetWidth / 2,
+      y: parseInt(box.style.top, 10) + box.offsetHeight / 2
+    });
+
+    const setBoxSizeFromCenter = (newW, newH) => {
+      const center = getBoxCenter();
+      const left = Math.max(0, center.x - newW / 2);
+      const top = Math.max(0, center.y - newH / 2);
+      box.style.left = `${left}px`;
+      box.style.top = `${top}px`;
+      box.style.width = `${newW}px`;
+      box.style.height = `${newH}px`;
+      // Update panel position below box
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top + newH + 10}px`;
+      // Update input value
+      sizeInput.value = `${newW}x${newH}`;
     };
-    overlay.onmouseup = (e) => {
-      if (!start) return;
-      selectedRect = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
+
+    confirmBtn.onclick = () => {
+      selectedRect = {
+        left: parseInt(box.style.left, 10),
+        top: parseInt(box.style.top, 10),
+        width: box.offsetWidth,
+        height: box.offsetHeight
+      };
+      // Hide control panel but keep box visible
+      panel.remove();
+      // Update overlay to show confirmed state
+      overlay.style.background = 'rgba(0,0,0,0.1)';
+      box.style.borderColor = '#00ff00';
+      box.style.background = 'rgba(0,255,0,0.1)';
+      // Add a label showing confirmed
+      const label = document.createElement('div');
+      label.id = 'feishu-ocr-confirm-label';
+      label.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #00aa00;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        z-index: 2147483648;
+      `;
+      label.textContent = `✅ Region confirmed: ${selectedRect.width}x${selectedRect.height}`;
+      document.body.appendChild(label);
+    };
+
+    cancelBtn.onclick = () => {
       overlay.remove();
       overlay = null;
-      alert('Region selected. Open extension popup and click "Capture + Extract".');
+      panel.remove();
+      overlay = null;
+    };
+
+    sizeInput.onchange = () => {
+      const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
+      if (match) {
+        const w = Math.max(100, parseInt(match[1], 10));
+        const h = Math.max(50, parseInt(match[2], 10));
+        setBoxSizeFromCenter(w, h);
+      }
+    };
+
+    sizeInput.onkeydown = (e) => {
+      if (e.key === 'Enter') sizeInput.onchange();
     };
   }
 };
@@ -263,7 +413,49 @@ async function runCaptureExtract() {
   alert(`Done. TXT saved via download. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'START_PICK_REGION') UI.pickRegion();
-  if (msg?.type === 'RUN_CAPTURE_EXTRACT') runCaptureExtract();
+let isRunning = false;
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // PING handler for popup connectivity check
+  if (msg?.type === 'PING') {
+    sendResponse({ ok: true, pong: true, windowId: sender.tab?.windowId });
+    return true;
+  }
+
+  if (msg?.type === 'START_PICK_REGION') {
+    UI.pickRegion();
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg?.type === 'RUN_CAPTURE_EXTRACT') {
+    if (isRunning) {
+      sendResponse({ ok: false, error: 'Already running' });
+      return true;
+    }
+    isRunning = true;
+    runCaptureExtract()
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+      .finally(() => { isRunning = false; });
+    return true; // async response
+  }
+
+  if (msg?.type === 'CAPTURE_VISIBLE') {
+    chrome.tabs.captureVisibleTab(msg.windowId || sender.tab?.windowId, { format: 'png' })
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg?.type === 'SAVE_TEXT') {
+    const blob = new Blob([msg.text || ''], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    chrome.downloads.download({ url, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  return false;
 });

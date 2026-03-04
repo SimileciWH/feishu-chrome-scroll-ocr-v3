@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Feishu Scroll OCR Extractor",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Manual region selection + auto-scroll screenshots + hybrid text extraction for Feishu docs.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads"],
-  "host_permissions": ["https://docs.feishu.cn/*", "https://*.feishu.cn/*", "https://api.ocr.space/*"],
+  "host_permissions": [
+    "https://docs.feishu.cn/*",
+    "https://*.feishu.cn/*",
+    "https://my.feishu.cn/*",
+    "https://api.ocr.space/*"
+  ],
   "action": {
     "default_title": "Feishu Scroll OCR",
     "default_popup": "src/popup.html"
@@ -15,7 +20,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://docs.feishu.cn/*", "https://*.feishu.cn/docx/*"],
+      "matches": [
+        "https://*.feishu.cn/*",
+        "https://docs.feishu.cn/*",
+        "https://my.feishu.cn/*"
+      ],
       "js": ["src/content.js"],
       "run_at": "document_idle"
     }
