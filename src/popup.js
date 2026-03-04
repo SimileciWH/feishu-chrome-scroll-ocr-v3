@@ -3,11 +3,19 @@ const apiKeyEl = document.getElementById('apiKey');
 const saveBtn = document.getElementById('save');
 const pickBtn = document.getElementById('pick');
 const runBtn = document.getElementById('run');
+const copyBtn = document.getElementById('copy');
+const downloadBtn = document.getElementById('download');
+const infoEl = document.getElementById('info');
 
 function setStatus(text, isError = false) {
   if (!statusEl) return;
   statusEl.textContent = text;
   statusEl.style.color = isError ? '#b00020' : '#666';
+}
+
+function setInfo(text) {
+  if (!infoEl) return;
+  infoEl.textContent = text;
 }
 
 function ensureRequiredElements() {
@@ -17,6 +25,9 @@ function ensureRequiredElements() {
   if (!saveBtn) missing.push('save');
   if (!pickBtn) missing.push('pick');
   if (!runBtn) missing.push('run');
+  if (!copyBtn) missing.push('copy');
+  if (!downloadBtn) missing.push('download');
+  if (!infoEl) missing.push('info');
 
   if (missing.length) {
     console.error('[popup] missing elements:', missing.join(','));
@@ -110,6 +121,43 @@ async function bootstrap() {
 
   pickBtn.onclick = () => sendToActiveTab('START_PICK_REGION');
   runBtn.onclick = () => sendToActiveTab('RUN_CAPTURE_EXTRACT');
+
+  // Copy to clipboard
+  copyBtn.onclick = async () => {
+    try {
+      setStatus('Getting extracted text...');
+      const tab = await getActiveTab();
+      const result = await safeSendMessage(tab.id, { type: 'GET_EXTRACTED_TEXT' });
+      if (!result.ok || !result.res?.text) {
+        setStatus('No extraction found. Run extraction first.', true);
+        return;
+      }
+      await navigator.clipboard.writeText(result.res.text);
+      setStatus('Copied to clipboard!');
+    } catch (e) {
+      setStatus('Copy failed: ' + String(e?.message || e), true);
+    }
+  };
+
+  // Download as .txt
+  downloadBtn.onclick = async () => {
+    try {
+      setStatus('Preparing download...');
+      const tab = await getActiveTab();
+      const result = await safeSendMessage(tab.id, { type: 'GET_EXTRACTED_TEXT' });
+      if (!result.ok || !result.res?.text) {
+        setStatus('No extraction found. Run extraction first.', true);
+        return;
+      }
+      const blob = new Blob([result.res.text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      await chrome.downloads.download({ url, filename, saveAs: true });
+      setStatus('Download started!');
+    } catch (e) {
+      setStatus('Download failed: ' + String(e?.message || e), true);
+    }
+  };
 }
 
 bootstrap();
