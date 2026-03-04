@@ -204,6 +204,16 @@ const UI = {
       overlay = null;
     };
 
+    // Real-time update on input (no need to click Confirm)
+    sizeInput.oninput = () => {
+      const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
+      if (match) {
+        const w = Math.max(100, parseInt(match[1], 10));
+        const h = Math.max(50, parseInt(match[2], 10));
+        setBoxSizeFromCenter(w, h);
+      }
+    };
+
     sizeInput.onchange = () => {
       const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
       if (match) {
@@ -442,6 +452,15 @@ async function runCaptureExtract() {
   });
   
   await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: fullText, filename });
+  
+  // Hide the red box and overlay after extraction
+  const boxToRemove = document.getElementById('feishu-ocr-region-box');
+  const overlayToRemove = document.getElementById('feishu-ocr-overlay');
+  const labelToRemove = document.getElementById('feishu-ocr-confirm-label');
+  if (boxToRemove) boxToRemove.remove();
+  if (overlayToRemove) overlayToRemove.remove();
+  if (labelToRemove) labelToRemove.remove();
+  
   alert(`Done! Text extracted. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }
 
