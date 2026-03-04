@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Feishu Scroll OCR Extractor",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Manual region selection + auto-scroll screenshots + hybrid text extraction for Feishu docs.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads"],
   "host_permissions": [

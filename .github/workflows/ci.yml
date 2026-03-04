@@ -17,5 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Test (placeholder runnable)
-        run: bash scripts/ci/test.sh
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          cd tests
+          npm install
+      - name: Run tests
+        run: |
+          cd tests
+          npm test
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: true

@@ -1,0 +1,11 @@
+{
+  "name": "feishu-chrome-scroll-ocr-v3",
+  "version": "0.4.2",
+  "description": "Tests for Feishu Chrome Scroll OCR Extension",
+  "scripts": {
+    "test": "node tests/extension.test.js"
+  },
+  "devDependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}
