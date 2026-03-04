@@ -100,6 +100,7 @@ function runTests() {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.html'), 'utf8');
     assertContains(content, 'id="status"', 'Should have status element');
     assertContains(content, 'id="apiKey"', 'Should have apiKey element');
+    assertContains(content, 'id="regionSize"', 'Should have region size input');
     assertContains(content, 'id="save"', 'Should have save button');
     assertContains(content, 'id="pick"', 'Should have pick button');
     assertContains(content, 'id="run"', 'Should have run button');
@@ -121,6 +122,7 @@ function runTests() {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.js'), 'utf8');
     assertContains(content, 'saveBtn.onclick', 'Should handle save click');
     assertContains(content, 'chrome.storage.local.set', 'Should save to storage');
+    assertContains(content, 'defaultRegionSize', 'Should persist default region size');
   });
 
   test('Popup handles pick region', () => {
@@ -229,7 +231,8 @@ function runTests() {
 
   test('Content script has drag functionality', () => {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/content.js'), 'utf8');
-    assertContains(content, 'makeDraggable', 'Should have drag functionality');
+    assertContains(content, 'makeInteractive', 'Should have drag functionality');
+    assertContains(content, 'feishu-ocr-resize-handle', 'Should support resize handles');
   });
 
   // Progress storage tests
