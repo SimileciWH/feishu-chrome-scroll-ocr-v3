@@ -32,6 +32,10 @@ async function safeSendMessage(tabId, payload) {
     return { ok: true, res };
   } catch (e) {
     const msg = String(e?.message || e);
+    // Handle "receiving end does not exist" explicitly
+    if (msg.includes('receiving end does not exist') || msg.includes('Could not establish connection')) {
+      return { ok: false, error: 'Content script not loaded. Try reloading the page or the extension.' };
+    }
     return { ok: false, error: msg };
   }
 }
@@ -45,14 +49,21 @@ async function getActiveTab() {
 
 async function sendToActiveTab(type) {
   try {
-    setStatus('Sending command...');
+    setStatus('Connecting...');
     const tab = await getActiveTab();
     const windowId = tab.windowId;
+
+    // Check if URL is supported
+    const url = tab.url || '';
+    const supported = url.includes('feishu.cn') || url.includes('docs.feishu.cn');
+    if (!supported) {
+      throw new Error('This extension only works on Feishu pages. Please open a Feishu doc or wiki.');
+    }
 
     // ping first to make error visible instead of silent failure
     const ping = await safeSendMessage(tab.id, { type: 'PING', windowId });
     if (!ping.ok) {
-      throw new Error(`Content script unavailable: ${ping.error}`);
+      throw new Error(ping.error + ' Try: (1) Reload the page, (2) Reload the extension in chrome://extensions');
     }
 
     const sent = await safeSendMessage(tab.id, { type, windowId });
@@ -64,7 +75,13 @@ async function sendToActiveTab(type) {
     window.close();
   } catch (e) {
     console.error('[popup] sendToActiveTab error:', e);
-    setStatus(`Error: ${String(e?.message || e)}`, true);
+    const msg = String(e?.message || e);
+    // More user-friendly error message
+    if (msg.includes('Content script not loaded')) {
+      setStatus('⚠️ Extension not ready. Click extension icon → reload → try again', true);
+    } else {
+      setStatus(`Error: ${msg}`, true);
+    }
   }
 }
 
