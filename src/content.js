@@ -165,6 +165,12 @@ const UI = {
         width: box.offsetWidth,
         height: box.offsetHeight
       };
+      
+      // Also store in localStorage for persistence
+      try {
+        localStorage.setItem('feishu_ocr_selectedRect', JSON.stringify(selectedRect));
+      } catch (e) {}
+      
       // Hide control panel but keep box visible
       panel.remove();
       // Update overlay to show confirmed state
@@ -327,8 +333,25 @@ const OCR = {
 };
 
 async function runCaptureExtract() {
+  // Try to restore from localStorage if not set
   if (!selectedRect) {
-    alert('Please select region first.');
+    try {
+      const stored = localStorage.getItem('feishu_ocr_selectedRect');
+      if (stored) {
+        selectedRect = JSON.parse(stored);
+      }
+    } catch (e) {}
+  }
+  
+  if (!selectedRect) {
+    alert('Please select region first. Click "Select Region", choose area, then click Confirm.');
+    return;
+  }
+
+  if (!selectedRect.width || !selectedRect.height) {
+    alert('Invalid region. Please select region again.');
+    selectedRect = null;
+    try { localStorage.removeItem('feishu_ocr_selectedRect'); } catch (e) {}
     return;
   }
 
@@ -459,10 +482,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === 'SAVE_TEXT') {
     const blob = new Blob([msg.text || ''], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    chrome.downloads.download({ url, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    const reader = new FileReader();
+    reader.onload = () => {
+      chrome.downloads.download({ url: reader.result, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
+        .then(() => sendResponse({ ok: true }))
+        .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    };
+    reader.onerror = () => sendResponse({ ok: false, error: 'Failed to read blob' });
+    reader.readAsDataURL(blob);
     return true;
   }
 
