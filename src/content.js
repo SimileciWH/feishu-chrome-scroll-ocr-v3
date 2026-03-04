@@ -45,7 +45,6 @@ const UI = {
       border: 2px solid #ff0000;
       background: rgba(255, 0, 0, 0.1);
       z-index: 2147483647;
-      resize: both;
       overflow: hidden;
       min-width: 100px;
       min-height: 50px;
@@ -79,7 +78,7 @@ const UI = {
         style="width:100px;padding:4px;border:1px solid #ccc;border-radius:4px;">
       <button id="feishu-ocr-confirm-btn" style="margin-left:8px;padding:4px 12px;background:#4f9fff;color:white;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
       <button id="feishu-ocr-cancel-btn" style="margin-left:4px;padding:4px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
-      <div style="margin-top:8px;font-size:11px;color:#666;">Drag box edges to resize • Drag center to move</div>
+      <div style="margin-top:8px;font-size:11px;color:#666;">Enter WxH to resize from center • Drag center to move</div>
     `;
     // Position panel below the box
     const boxRect = box.getBoundingClientRect();
@@ -138,6 +137,27 @@ const UI = {
     const confirmBtn = document.getElementById('feishu-ocr-confirm-btn');
     const cancelBtn = document.getElementById('feishu-ocr-cancel-btn');
 
+    // Store current center for center-aligned resizing
+    const getBoxCenter = () => ({
+      x: parseInt(box.style.left, 10) + box.offsetWidth / 2,
+      y: parseInt(box.style.top, 10) + box.offsetHeight / 2
+    });
+
+    const setBoxSizeFromCenter = (newW, newH) => {
+      const center = getBoxCenter();
+      const left = Math.max(0, center.x - newW / 2);
+      const top = Math.max(0, center.y - newH / 2);
+      box.style.left = `${left}px`;
+      box.style.top = `${top}px`;
+      box.style.width = `${newW}px`;
+      box.style.height = `${newH}px`;
+      // Update panel position below box
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top + newH + 10}px`;
+      // Update input value
+      sizeInput.value = `${newW}x${newH}`;
+    };
+
     confirmBtn.onclick = () => {
       selectedRect = {
         left: parseInt(box.style.left, 10),
@@ -145,10 +165,30 @@ const UI = {
         width: box.offsetWidth,
         height: box.offsetHeight
       };
-      overlay.remove();
-      overlay = null;
+      // Hide control panel but keep box visible
       panel.remove();
-      alert(`Region selected: ${selectedRect.width}x${selectedRect.height}`);
+      // Update overlay to show confirmed state
+      overlay.style.background = 'rgba(0,0,0,0.1)';
+      box.style.borderColor = '#00ff00';
+      box.style.background = 'rgba(0,255,0,0.1)';
+      // Add a label showing confirmed
+      const label = document.createElement('div');
+      label.id = 'feishu-ocr-confirm-label';
+      label.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #00aa00;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        z-index: 2147483648;
+      `;
+      label.textContent = `✅ Region confirmed: ${selectedRect.width}x${selectedRect.height}`;
+      document.body.appendChild(label);
     };
 
     cancelBtn.onclick = () => {
@@ -163,11 +203,7 @@ const UI = {
       if (match) {
         const w = Math.max(100, parseInt(match[1], 10));
         const h = Math.max(50, parseInt(match[2], 10));
-        box.style.width = `${w}px`;
-        box.style.height = `${h}px`;
-        // Update panel position
-        panel.style.left = box.style.left;
-        panel.style.top = `${parseInt(box.style.top, 10) + h + 10}px`;
+        setBoxSizeFromCenter(w, h);
       }
     };
 
