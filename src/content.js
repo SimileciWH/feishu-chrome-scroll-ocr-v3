@@ -263,7 +263,49 @@ async function runCaptureExtract() {
   alert(`Done. TXT saved via download. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'START_PICK_REGION') UI.pickRegion();
-  if (msg?.type === 'RUN_CAPTURE_EXTRACT') runCaptureExtract();
+let isRunning = false;
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // PING handler for popup connectivity check
+  if (msg?.type === 'PING') {
+    sendResponse({ ok: true, pong: true, windowId: sender.tab?.windowId });
+    return true;
+  }
+
+  if (msg?.type === 'START_PICK_REGION') {
+    UI.pickRegion();
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg?.type === 'RUN_CAPTURE_EXTRACT') {
+    if (isRunning) {
+      sendResponse({ ok: false, error: 'Already running' });
+      return true;
+    }
+    isRunning = true;
+    runCaptureExtract()
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+      .finally(() => { isRunning = false; });
+    return true; // async response
+  }
+
+  if (msg?.type === 'CAPTURE_VISIBLE') {
+    chrome.tabs.captureVisibleTab(msg.windowId || sender.tab?.windowId, { format: 'png' })
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg?.type === 'SAVE_TEXT') {
+    const blob = new Blob([msg.text || ''], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    chrome.downloads.download({ url, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  return false;
 });

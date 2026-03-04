@@ -36,25 +36,26 @@ async function safeSendMessage(tabId, payload) {
   }
 }
 
-async function getActiveTabId() {
+async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs?.[0];
   if (!tab?.id) throw new Error('No active tab');
-  return tab.id;
+  return tab;
 }
 
 async function sendToActiveTab(type) {
   try {
     setStatus('Sending command...');
-    const tabId = await getActiveTabId();
+    const tab = await getActiveTab();
+    const windowId = tab.windowId;
 
     // ping first to make error visible instead of silent failure
-    const ping = await safeSendMessage(tabId, { type: 'PING' });
+    const ping = await safeSendMessage(tab.id, { type: 'PING', windowId });
     if (!ping.ok) {
       throw new Error(`Content script unavailable: ${ping.error}`);
     }
 
-    const sent = await safeSendMessage(tabId, { type });
+    const sent = await safeSendMessage(tab.id, { type, windowId });
     if (!sent.ok) {
       throw new Error(`sendMessage failed: ${sent.error}`);
     }
