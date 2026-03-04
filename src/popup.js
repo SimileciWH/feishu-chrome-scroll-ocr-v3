@@ -43,7 +43,9 @@ async function safeSendMessage(tabId, payload) {
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs?.[0];
-  if (!tab?.id) throw new Error('No active tab');
+  if (!tab?.id) {
+    throw new Error('No active tab found. Please open a Feishu page.');
+  }
   return tab;
 }
 
@@ -63,22 +65,23 @@ async function sendToActiveTab(type) {
     // ping first to make error visible instead of silent failure
     const ping = await safeSendMessage(tab.id, { type: 'PING', windowId });
     if (!ping.ok) {
-      throw new Error(ping.error + ' Try: (1) Reload the page, (2) Reload the extension in chrome://extensions');
+      const errMsg = String(ping.error || 'Unknown connection error');
+      throw new Error(errMsg + ' | Try: (1) Reload the page, (2) Reload the extension');
     }
 
     const sent = await safeSendMessage(tab.id, { type, windowId });
     if (!sent.ok) {
-      throw new Error(`sendMessage failed: ${sent.error}`);
+      throw new Error(String(sent.error || 'Unknown send error'));
     }
 
     setStatus(type === 'START_PICK_REGION' ? 'Region mode started' : 'Capture task started');
-    window.close();
+    setTimeout(() => window.close(), 800);
   } catch (e) {
     console.error('[popup] sendToActiveTab error:', e);
-    const msg = String(e?.message || e);
+    const msg = String(e?.message || e || 'Unknown error');
     // More user-friendly error message
-    if (msg.includes('Content script not loaded')) {
-      setStatus('⚠️ Extension not ready. Click extension icon → reload → try again', true);
+    if (msg.includes('Content script not loaded') || msg.includes('receiving end')) {
+      setStatus('⚠️ Content script not ready. Reload page + extension.', true);
     } else {
       setStatus(`Error: ${msg}`, true);
     }
