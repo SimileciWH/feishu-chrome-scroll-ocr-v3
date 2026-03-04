@@ -1,7 +1,15 @@
+if (window.__FEISHU_OCR_CONTENT_READY__) {
+  console.debug('[feishu-ocr] content script already ready');
+} else {
+window.__FEISHU_OCR_CONTENT_READY__ = true;
+
 let selectedRect = null;
 let overlay = null;
 
 const CONFIG = {
+  extract: {
+    ignoreImageText: true, // true => disable OCR supplement entirely
+  },
   scroll: {
     maxIterations: 140,
     minStep: 220,
@@ -25,10 +33,71 @@ const CONFIG = {
 const Util = {
   sleep(ms) { return new Promise(r => setTimeout(r, ms)); },
   normalizeBlock(s) { return (s || '').replace(/\u200b/g, '').replace(/\s+/g, ' ').trim(); },
+  normalizeKeepLines(s) {
+    return String(s || '')
+      .replace(/\u200b/g, '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  },
   nowIso() { return new Date().toISOString(); },
 };
 
+function getExtractStorageKeys(tabId) {
+  const suffix = Number.isFinite(tabId) ? `_${tabId}` : '';
+  return {
+    progress: `extractProgress${suffix}`,
+    text: `extractedText${suffix}`,
+    meta: `extractedMeta${suffix}`,
+    at: `extractedAt${suffix}`,
+    filename: `extractedFilename${suffix}`
+  };
+}
+
+function getRegionStorageKey(tabId) {
+  return Number.isFinite(tabId) ? `selectedRect_${tabId}` : null;
+}
+
+function sanitizeFilenamePart(s) {
+  const cleaned = String(s || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/[^\p{L}\p{N}\p{Script=Han}\s._()-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .slice(0, 64);
+  return cleaned || 'feishu-extract';
+}
+
+function getDocTitleForFilename() {
+  const h1 = document.querySelector('h1');
+  const metaTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
+  const titleCandidates = [
+    h1?.innerText || '',
+    metaTitle,
+    document.title || ''
+  ].map((t) => t.trim()).filter(Boolean);
+
+  for (const raw of titleCandidates) {
+    let t = raw
+      .replace(/\s*-\s*飞书.*$/i, '')
+      .replace(/\s*-\s*Feishu.*$/i, '')
+      .replace(/\s*\|\s*飞书.*$/i, '')
+      .replace(/\s*\|\s*Feishu.*$/i, '')
+      .trim();
+    t = sanitizeFilenamePart(t);
+    if (t && t.length >= 2) return t;
+  }
+  return '';
+}
+
 const UI = {
+  minWidth: 100,
+  minHeight: 50,
+
   makeOverlay() {
     const o = document.createElement('div');
     o.id = 'feishu-ocr-overlay';
@@ -46,8 +115,9 @@ const UI = {
       background: rgba(255, 0, 0, 0.1);
       z-index: 2147483647;
       overflow: hidden;
-      min-width: 100px;
-      min-height: 50px;
+      min-width: ${UI.minWidth}px;
+      min-height: ${UI.minHeight}px;
+      box-sizing: border-box;
     `;
     // Center the box
     const centerX = (window.innerWidth - defaultW) / 2;
@@ -59,106 +129,163 @@ const UI = {
     return box;
   },
 
-  makeControlPanel(box) {
-    const panel = document.createElement('div');
-    panel.id = 'feishu-ocr-control-panel';
-    panel.style.cssText = `
-      position: fixed;
-      z-index: 2147483648;
-      background: white;
-      padding: 10px;
-      border-radius: 6px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-      font-family: Arial, sans-serif;
-      font-size: 13px;
+  makeInlineControls(box) {
+    const toolbar = document.createElement('div');
+    toolbar.id = 'feishu-ocr-control-panel';
+    toolbar.style.cssText = `
+      position:absolute;
+      top:8px;
+      left:8px;
+      z-index:2;
+      display:flex;
+      align-items:center;
+      gap:6px;
+      background:rgba(255,255,255,0.96);
+      border:1px solid #ddd;
+      border-radius:6px;
+      padding:6px;
+      box-shadow:0 1px 6px rgba(0,0,0,0.2);
+      font-family:Arial,sans-serif;
+      font-size:12px;
+      max-width:calc(100% - 16px);
     `;
-    panel.innerHTML = `
-      <div style="margin-bottom:8px;font-weight:bold;color:#333;">📐 Region Size</div>
-      <input type="text" id="feishu-ocr-size-input" placeholder="800x600" value="${box.style.width.replace('px','')}x${box.style.height.replace('px','')}"
-        style="width:100px;padding:4px;border:1px solid #ccc;border-radius:4px;">
-      <button id="feishu-ocr-confirm-btn" style="margin-left:8px;padding:4px 12px;background:#4f9fff;color:white;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
-      <button id="feishu-ocr-cancel-btn" style="margin-left:4px;padding:4px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
-      <div style="margin-top:8px;font-size:11px;color:#666;">Enter WxH to resize from center • Drag center to move</div>
+    toolbar.innerHTML = `
+      <button id="feishu-ocr-confirm-btn" style="padding:2px 8px;background:#2f80ed;color:#fff;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
+      <button id="feishu-ocr-cancel-btn" style="padding:2px 8px;background:#eee;color:#333;border:1px solid #ccc;border-radius:4px;cursor:pointer;">Cancel</button>
+      <span style="font-size:11px;color:#666;white-space:nowrap;">Drag edges/corners to resize</span>
     `;
-    // Position panel in the center of the box (not at edge)
-    const boxRect = box.getBoundingClientRect();
-    const panelWidth = 280; // approximate width
-    const panelHeight = 80; // approximate height
-    panel.style.left = `${boxRect.left + (boxRect.width - panelWidth) / 2}px`;
-    panel.style.top = `${boxRect.top + (boxRect.height - panelHeight) / 2}px`;
-    return panel;
+    box.appendChild(toolbar);
+    return toolbar;
   },
 
-  makeDraggable(box, panel) {
-    let isDragging = false;
-    let startX, startY, startLeft, startTop;
+  makeResizeHandles(box) {
+    const handles = [
+      { dir: 'n', css: 'top:-5px;left:50%;transform:translateX(-50%);cursor:n-resize;' },
+      { dir: 's', css: 'bottom:-5px;left:50%;transform:translateX(-50%);cursor:s-resize;' },
+      { dir: 'w', css: 'left:-5px;top:50%;transform:translateY(-50%);cursor:w-resize;' },
+      { dir: 'e', css: 'right:-5px;top:50%;transform:translateY(-50%);cursor:e-resize;' },
+      { dir: 'nw', css: 'left:-6px;top:-6px;cursor:nw-resize;' },
+      { dir: 'ne', css: 'right:-6px;top:-6px;cursor:ne-resize;' },
+      { dir: 'sw', css: 'left:-6px;bottom:-6px;cursor:sw-resize;' },
+      { dir: 'se', css: 'right:-6px;bottom:-6px;cursor:se-resize;' }
+    ];
+    handles.forEach((h) => {
+      const el = document.createElement('div');
+      el.className = 'feishu-ocr-resize-handle';
+      el.dataset.dir = h.dir;
+      el.style.cssText = `
+        position:absolute;
+        width:10px;
+        height:10px;
+        border:1px solid #fff;
+        background:#ff2e2e;
+        border-radius:2px;
+        z-index:3;
+        ${h.css}
+      `;
+      box.appendChild(el);
+    });
+  },
 
-    // Drag to move
-    box.addEventListener('mousedown', (e) => {
-      if (e.target === box || e.target.style.cursor === 'move') {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startLeft = parseInt(box.style.left, 10);
-        startTop = parseInt(box.style.top, 10);
-        e.preventDefault();
+  applyRect(box, rect) {
+    const maxLeft = Math.max(0, window.innerWidth - rect.width);
+    const maxTop = Math.max(0, window.innerHeight - rect.height);
+    box.style.left = `${Math.max(0, Math.min(maxLeft, rect.left))}px`;
+    box.style.top = `${Math.max(0, Math.min(maxTop, rect.top))}px`;
+    box.style.width = `${Math.max(UI.minWidth, Math.min(window.innerWidth, rect.width))}px`;
+    box.style.height = `${Math.max(UI.minHeight, Math.min(window.innerHeight, rect.height))}px`;
+  },
+
+  makeInteractive(box) {
+    let dragState = null;
+
+    const readRect = () => ({
+      left: parseInt(box.style.left, 10) || 0,
+      top: parseInt(box.style.top, 10) || 0,
+      width: box.offsetWidth,
+      height: box.offsetHeight
+    });
+
+    const onMouseDown = (e) => {
+      const target = e.target;
+      if (target.closest('#feishu-ocr-control-panel') && !target.classList.contains('feishu-ocr-resize-handle')) {
+        return;
       }
-    });
+      const handle = target.closest('.feishu-ocr-resize-handle');
+      const base = readRect();
+      if (handle) {
+        dragState = { mode: 'resize', dir: handle.dataset.dir, x: e.clientX, y: e.clientY, base };
+      } else {
+        dragState = { mode: 'move', x: e.clientX, y: e.clientY, base };
+      }
+      e.preventDefault();
+    };
 
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      let newLeft = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, startLeft + dx));
-      let newTop = Math.max(0, Math.min(window.innerHeight - box.offsetHeight, startTop + dy));
-      box.style.left = `${newLeft}px`;
-      box.style.top = `${newTop}px`;
-      // Update panel position
-      panel.style.left = `${newLeft}px`;
-      panel.style.top = `${newTop + box.offsetHeight + 10}px`;
-    });
+    const onMouseMove = (e) => {
+      if (!dragState) return;
+      const dx = e.clientX - dragState.x;
+      const dy = e.clientY - dragState.y;
+      const next = { ...dragState.base };
 
-    document.addEventListener('mouseup', () => {
-      isDragging = false;
-    });
+      if (dragState.mode === 'move') {
+        next.left = dragState.base.left + dx;
+        next.top = dragState.base.top + dy;
+      } else {
+        const { dir } = dragState;
+        if (dir.includes('e')) next.width = dragState.base.width + dx;
+        if (dir.includes('s')) next.height = dragState.base.height + dy;
+        if (dir.includes('w')) {
+          next.left = dragState.base.left + dx;
+          next.width = dragState.base.width - dx;
+        }
+        if (dir.includes('n')) {
+          next.top = dragState.base.top + dy;
+          next.height = dragState.base.height - dy;
+        }
+      }
+      UI.applyRect(box, next);
+    };
+
+    const onMouseUp = () => { dragState = null; };
+
+    box.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      box.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
   },
 
-  pickRegion() {
+  pickRegion(defaultSize, defaultRegionRect, sourceTabId) {
+    const oldOverlay = document.getElementById('feishu-ocr-overlay');
+    if (oldOverlay) oldOverlay.remove();
+    const oldLabel = document.getElementById('feishu-ocr-confirm-label');
+    if (oldLabel) oldLabel.remove();
     if (overlay) overlay.remove();
     overlay = UI.makeOverlay();
     
-    const defaultW = 800, defaultH = 600;
+    const defaultW = Math.max(UI.minWidth, Math.min(window.innerWidth, defaultSize?.width || 800));
+    const defaultH = Math.max(UI.minHeight, Math.min(window.innerHeight, defaultSize?.height || 600));
     const box = UI.makeRegionBox(defaultW, defaultH);
+    if (defaultRegionRect && Number.isFinite(defaultRegionRect.left) && Number.isFinite(defaultRegionRect.top) && Number.isFinite(defaultRegionRect.width) && Number.isFinite(defaultRegionRect.height)) {
+      UI.applyRect(box, {
+        left: defaultRegionRect.left,
+        top: defaultRegionRect.top,
+        width: defaultRegionRect.width,
+        height: defaultRegionRect.height
+      });
+    }
     overlay.appendChild(box);
 
-    const panel = UI.makeControlPanel(box);
-    document.body.appendChild(panel);
-    UI.makeDraggable(box, panel);
+    const panel = UI.makeInlineControls(box);
+    UI.makeResizeHandles(box);
 
-    const sizeInput = document.getElementById('feishu-ocr-size-input');
     const confirmBtn = document.getElementById('feishu-ocr-confirm-btn');
     const cancelBtn = document.getElementById('feishu-ocr-cancel-btn');
-
-    // Store current center for center-aligned resizing
-    const getBoxCenter = () => ({
-      x: parseInt(box.style.left, 10) + box.offsetWidth / 2,
-      y: parseInt(box.style.top, 10) + box.offsetHeight / 2
-    });
-
-    const setBoxSizeFromCenter = (newW, newH) => {
-      const center = getBoxCenter();
-      const left = Math.max(0, center.x - newW / 2);
-      const top = Math.max(0, center.y - newH / 2);
-      box.style.left = `${left}px`;
-      box.style.top = `${top}px`;
-      box.style.width = `${newW}px`;
-      box.style.height = `${newH}px`;
-      // Update panel position below box
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top + newH + 10}px`;
-      // Update input value
-      sizeInput.value = `${newW}x${newH}`;
-    };
+    const cleanupInteractive = UI.makeInteractive(box);
 
     confirmBtn.onclick = () => {
       selectedRect = {
@@ -172,9 +299,17 @@ const UI = {
       try {
         localStorage.setItem('feishu_ocr_selectedRect', JSON.stringify(selectedRect));
       } catch (e) {}
+      try {
+        chrome.storage.local.set({ pendingRegionRect: selectedRect });
+      } catch (e) {}
+      try {
+        const regionKey = getRegionStorageKey(sourceTabId);
+        if (regionKey) chrome.storage.local.set({ [regionKey]: selectedRect });
+      } catch (e) {}
       
-      // Hide control panel but keep box visible
+      cleanupInteractive();
       panel.remove();
+      box.querySelectorAll('.feishu-ocr-resize-handle').forEach((el) => el.remove());
       // Update overlay to show confirmed state
       overlay.style.background = 'rgba(0,0,0,0.1)';
       box.style.borderColor = '#00ff00';
@@ -200,33 +335,9 @@ const UI = {
     };
 
     cancelBtn.onclick = () => {
+      cleanupInteractive();
       overlay.remove();
       overlay = null;
-      panel.remove();
-      overlay = null;
-    };
-
-    // Real-time update on input (no need to click Confirm)
-    sizeInput.oninput = () => {
-      const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
-      if (match) {
-        const w = Math.max(100, parseInt(match[1], 10));
-        const h = Math.max(50, parseInt(match[2], 10));
-        setBoxSizeFromCenter(w, h);
-      }
-    };
-
-    sizeInput.onchange = () => {
-      const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
-      if (match) {
-        const w = Math.max(100, parseInt(match[1], 10));
-        const h = Math.max(50, parseInt(match[2], 10));
-        setBoxSizeFromCenter(w, h);
-      }
-    };
-
-    sizeInput.onkeydown = (e) => {
-      if (e.key === 'Enter') sizeInput.onchange();
     };
   }
 };
@@ -257,11 +368,28 @@ const Scroll = {
 };
 
 const TextLayer = {
+  compactText(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/[\s\u00a0]/g, '')
+      .replace(/[，。、“”‘’：:；;,.!?！？【】\[\]()（）\-—_~`'"<>《》]/g, '');
+  },
+  isNoiseNode(node) {
+    const el = node?.closest?.('[class],[id],[role],[aria-label]');
+    if (!el) return false;
+    const sig = `${el.id || ''} ${el.className || ''} ${el.getAttribute?.('role') || ''} ${el.getAttribute?.('aria-label') || ''}`.toLowerCase();
+    return /(sidebar|aside|toolbar|comment|quickview|suggest|backlink|mention|catalog|toc|outline|menu|popover|dialog|header)/.test(sig);
+  },
   extractInRect(rect) {
     const nodes = [...document.querySelectorAll('p, div, span, h1, h2, h3, li')];
     const out = [];
     for (const n of nodes) {
-      const t = Util.normalizeBlock(n.innerText || '');
+      if (TextLayer.isNoiseNode(n)) continue;
+      // Prefer leaf-ish nodes to avoid merging an entire document region into one line.
+      const hasRichChildren = [...(n.children || [])].some((c) => /^(P|DIV|LI|H1|H2|H3)$/i.test(c.tagName));
+      if (hasRichChildren && /^(DIV|SPAN)$/i.test(n.tagName)) continue;
+
+      const t = Util.normalizeKeepLines(n.innerText || '');
       if (!t || t.length < 2) continue;
       const r = n.getBoundingClientRect();
       const overlap = !(r.right < rect.left || r.left > rect.left + rect.width || r.bottom < rect.top || r.top > rect.top + rect.height);
@@ -280,6 +408,113 @@ const TextLayer = {
       out.push(b);
     }
     return out;
+  },
+  dedupeSmart(lines) {
+    const kept = [];
+    const minContainLen = 10;
+    const minGap = 4;
+
+    for (const raw of lines) {
+      const line = Util.normalizeBlock(raw);
+      if (!line) continue;
+      const compact = TextLayer.compactText(line);
+      if (!compact) continue;
+
+      // 1) exact duplicate
+      if (kept.some((k) => k.compact === compact)) continue;
+
+      // 2) fragment of an existing longer sentence
+      const covered = kept.some((k) => (
+        compact.length >= minContainLen &&
+        k.compact.includes(compact) &&
+        (k.compact.length - compact.length) >= minGap
+      ));
+      if (covered) continue;
+
+      // 3) this new line is a fuller sentence; drop older fragments it covers
+      const nextKept = kept.filter((k) => !(
+        compact.length >= (minContainLen + minGap) &&
+        compact.includes(k.compact) &&
+        k.compact.length >= minContainLen &&
+        (compact.length - k.compact.length) >= minGap
+      ));
+      kept.length = 0;
+      kept.push(...nextKept);
+      kept.push({ line, compact });
+    }
+
+    return kept.map((k) => k.line);
+  }
+};
+
+const TextFilter = {
+  noisePatterns: [
+    /\bAI QuickView\b/i,
+    /\bFree trial\b/i,
+    /\bSuggestions are generated by AI\b/i,
+    /\bYou Might Also Wonder\b/i,
+    /\bBacklinks\b/i,
+    /\bMentioned Docs\b/i,
+    /\bGraph view\b/i,
+    /\bUpload Log\b/i,
+    /\bCustomer Service\b/i,
+    /\bWhat's New\b/i,
+    /\bHelp Center\b/i,
+    /\bKeyboard Shortcuts\b/i,
+    /\bComments?\s*\(\d+\)\b/i,
+    /\bLikes?\b/i,
+    /\bExternal\b/i,
+    /\bLast modified\b/i,
+    /\bShare\b/i
+  ],
+  keepEnglishTerms: /\b(API|SDK|HTTP|HTTPS|JSON|JavaScript|TypeScript|SQL|Chrome|OCR|OpenAI|URL|UI|UX|ToB|ToG)\b/i,
+  splitLines(block) {
+    return String(block || '')
+      .split(/\n+/)
+      .map((s) => Util.normalizeKeepLines(s))
+      .filter(Boolean);
+  },
+  ratio(line, re) {
+    const m = line.match(re);
+    return (m ? m.length : 0) / Math.max(1, line.length);
+  },
+  hasNoise(line) {
+    return TextFilter.noisePatterns.some((re) => re.test(line));
+  },
+  isLikelyUiLabel(line) {
+    if (line.length > 70) return false;
+    if (/^[A-Za-z0-9 _\-:()/.]+$/.test(line) && !/[\u4e00-\u9fff]/.test(line)) return true;
+    return false;
+  },
+  keepLine(line, mode) {
+    if (!line) return false;
+    if (TextFilter.hasNoise(line)) return false;
+    if (mode === 'bilingual') return true;
+
+    const zhRatio = TextFilter.ratio(line, /[\u4e00-\u9fff]/g);
+    const enRatio = TextFilter.ratio(line, /[A-Za-z]/g);
+    const hasKeepTerm = TextFilter.keepEnglishTerms.test(line);
+
+    if (mode === 'cn_strict') {
+      if (zhRatio > 0.08) return true;
+      return hasKeepTerm && line.length >= 8;
+    }
+
+    // auto mode: keep mixed/Chinese; drop short pure-English UI-like lines.
+    if (zhRatio > 0.06) return true;
+    if (hasKeepTerm && line.length >= 8) return true;
+    if (enRatio > 0.65 && TextFilter.isLikelyUiLabel(line)) return false;
+    if (enRatio > 0.8 && line.length < 32) return false;
+    return enRatio <= 0.9 || line.length > 80;
+  },
+  filterBlocks(blocks, mode = 'auto') {
+    const outLines = [];
+    for (const block of blocks) {
+      const lines = TextFilter.splitLines(block).filter((line) => TextFilter.keepLine(line, mode));
+      if (!lines.length) continue;
+      outLines.push(...lines);
+    }
+    return TextLayer.dedupeSmart(outLines);
   }
 };
 
@@ -344,22 +579,36 @@ const OCR = {
   }
 };
 
-async function runCaptureExtract() {
+async function runCaptureExtract(tabId) {
+  const storageKeys = getExtractStorageKeys(tabId);
+  const regionKey = getRegionStorageKey(tabId);
   // Send initial status to popup via both message and storage
   try {
     chrome.runtime.sendMessage({ type: 'EXTRACT_PROGRESS', progress: 'starting', iteration: 0 });
     await chrome.storage.local.set({ 
-      extractProgress: { progress: 'starting', iteration: 0 }
+      [storageKeys.progress]: { progress: 'starting', iteration: 0 }
     });
   } catch (e) {}
 
   // Try to restore from localStorage if not set
+  if (!selectedRect && regionKey) {
+    try {
+      const scoped = await chrome.storage.local.get([regionKey]);
+      if (scoped?.[regionKey]) selectedRect = scoped[regionKey];
+    } catch (e) {}
+  }
   if (!selectedRect) {
     try {
       const stored = localStorage.getItem('feishu_ocr_selectedRect');
       if (stored) {
         selectedRect = JSON.parse(stored);
       }
+    } catch (e) {}
+  }
+  if (!selectedRect) {
+    try {
+      const stored = await chrome.storage.local.get(['defaultRegionRect']);
+      if (stored?.defaultRegionRect) selectedRect = stored.defaultRegionRect;
     } catch (e) {}
   }
   
@@ -377,7 +626,8 @@ async function runCaptureExtract() {
 
   const startedAtMs = Date.now();
   const scroller = Scroll.findContainer();
-  const { ocrApiKey } = await chrome.storage.local.get(['ocrApiKey']);
+  const { ocrApiKey, languageMode } = await chrome.storage.local.get(['ocrApiKey', 'languageMode']);
+  const effectiveLanguageMode = ['auto', 'cn_strict', 'bilingual'].includes(languageMode) ? languageMode : 'auto';
 
   const domBlocksRaw = [];
   const ocrBlocksRaw = [];
@@ -397,7 +647,7 @@ async function runCaptureExtract() {
   let lastTop = -1;
   let prevHeight = scroller.scrollHeight;
 
-  for (let i = 0; i < CONFIG.scroll.maxIterations; i += 1) {
+  const doExtractPass = async (i) => {
     meta.iterations += 1;
     
     // Send progress update via both message and storage
@@ -409,7 +659,7 @@ async function runCaptureExtract() {
         message: `Scrolling... (${i + 1})`
       });
       await chrome.storage.local.set({ 
-        extractProgress: { 
+        [storageKeys.progress]: { 
           progress: 'scrolling', 
           iteration: i,
           message: `正在滚动... (${i + 1})`
@@ -417,25 +667,30 @@ async function runCaptureExtract() {
       });
     } catch (e) {}
 
-    await Scroll.waitStableWindow();
-
     // text-layer first
     const pageDomBlocks = TextLayer.extractInRect(selectedRect);
     domBlocksRaw.push(...pageDomBlocks);
 
-    // OCR fallback per viewport
-    try {
-      const cap = await chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE' });
-      if (cap?.ok) {
-        const cropped = await OCR.cropDataUrl(cap.dataUrl, selectedRect);
-        const lang = OCR.inferLang(pageDomBlocks);
-        const o = await OCR.extractWithRetry(cropped, ocrApiKey, lang);
-        meta.ocr_calls += o.tried;
-        if (o.lowConfidence) meta.low_confidence_hits += 1;
-        if (o.text) ocrBlocksRaw.push(o.text);
-      }
-    } catch (_) {}
+    // Ignore image text when configured: no screenshot OCR pass.
+    if (!CONFIG.extract.ignoreImageText) {
+      try {
+        const cap = await chrome.runtime.sendMessage({ type: 'CAPTURE_VISIBLE' });
+        if (cap?.ok) {
+          const cropped = await OCR.cropDataUrl(cap.dataUrl, selectedRect);
+          const lang = OCR.inferLang(pageDomBlocks);
+          const o = await OCR.extractWithRetry(cropped, ocrApiKey, lang);
+          meta.ocr_calls += o.tried;
+          if (o.lowConfidence) meta.low_confidence_hits += 1;
+          if (o.text) ocrBlocksRaw.push(o.text);
+        }
+      } catch (_) {}
+    }
+  };
 
+  await Scroll.waitStableWindow();
+  await doExtractPass(0);
+
+  for (let i = 1; i < CONFIG.scroll.maxIterations; i += 1) {
     const currentTop = scroller.scrollTop;
     const nextTop = Math.min(currentTop + step, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
     scroller.scrollTop = nextTop;
@@ -449,12 +704,14 @@ async function runCaptureExtract() {
 
     prevHeight = scroller.scrollHeight;
     lastTop = currentTop;
+    await Scroll.waitStableWindow();
+    await doExtractPass(i);
   }
 
   scroller.scrollTop = startTop;
 
-  const domBlocks = TextLayer.dedupe(domBlocksRaw);
-  const ocrBlocks = TextLayer.dedupe(ocrBlocksRaw);
+  const domBlocks = TextFilter.filterBlocks(domBlocksRaw, effectiveLanguageMode);
+  const ocrBlocks = CONFIG.extract.ignoreImageText ? [] : TextFilter.filterBlocks(ocrBlocksRaw, effectiveLanguageMode);
   const merged = [
     '# DOM Extract (primary)',
     ...domBlocks,
@@ -466,17 +723,22 @@ async function runCaptureExtract() {
   meta.elapsed_seconds = Number(((Date.now() - startedAtMs) / 1000).toFixed(1));
   meta.dom_blocks = domBlocks.length;
   meta.ocr_blocks = ocrBlocks.length;
+  meta.language_mode = effectiveLanguageMode;
+  meta.ignore_image_text = CONFIG.extract.ignoreImageText;
 
   const footer = `\n\n# META\n${JSON.stringify(meta, null, 2)}`;
   const fullText = merged + footer;
-  const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+  const title = getDocTitleForFilename();
+  const fallbackTs = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = title ? `${title}.txt` : `feishu-extract-${fallbackTs}.txt`;
   
   // Store extracted text for popup access
   await chrome.storage.local.set({ 
-    extractedText: fullText,
-    extractedMeta: meta,
-    extractedAt: Date.now(),
-    extractProgress: { 
+    [storageKeys.text]: fullText,
+    [storageKeys.meta]: meta,
+    [storageKeys.at]: Date.now(),
+    [storageKeys.filename]: filename,
+    [storageKeys.progress]: { 
       progress: 'done', 
       iteration: meta.iterations,
       charCount: fullText.length,
@@ -518,8 +780,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg?.type === 'START_PICK_REGION') {
-    UI.pickRegion();
+    UI.pickRegion(msg?.defaultRegionSize, msg?.defaultRegionRect, msg?.tabId);
     sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg?.type === 'GET_REGION_STATE') {
+    const regionStateReply = async () => {
+      const key = getRegionStorageKey(msg?.tabId);
+      if (!key) {
+        sendResponse({ ok: true, hasRegion: false, rect: null, title: getDocTitleForFilename() || document.title || '' });
+        return;
+      }
+      let rect = null;
+      try {
+        const scoped = await chrome.storage.local.get([key]);
+        rect = scoped?.[key] || null;
+      } catch (_) {}
+      const hasRegion = !!(rect && rect.width && rect.height);
+      sendResponse({
+        ok: true,
+        hasRegion,
+        rect: hasRegion ? rect : null,
+        title: getDocTitleForFilename() || document.title || ''
+      });
+    };
+    regionStateReply();
     return true;
   }
 
@@ -529,7 +815,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
     isRunning = true;
-    runCaptureExtract()
+    runCaptureExtract(msg?.tabId)
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }))
       .finally(() => { isRunning = false; });
@@ -557,12 +843,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg?.type === 'GET_EXTRACTED_TEXT') {
-    chrome.storage.local.get(['extractedText', 'extractedMeta', 'extractedAt'], (result) => {
+    const keys = getExtractStorageKeys(msg?.tabId);
+    chrome.storage.local.get([keys.text, keys.meta, keys.at, keys.filename], (result) => {
       sendResponse({ 
         ok: true, 
-        text: result.extractedText || '',
-        meta: result.extractedMeta || null,
-        extractedAt: result.extractedAt || null
+        text: result[keys.text] || '',
+        meta: result[keys.meta] || null,
+        extractedAt: result[keys.at] || null,
+        filename: result[keys.filename] || null
       });
     });
     return true;
@@ -570,3 +858,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return false;
 });
+}

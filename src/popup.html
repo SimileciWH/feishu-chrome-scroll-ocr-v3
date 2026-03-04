@@ -3,28 +3,285 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { font-family: Arial, sans-serif; width: 320px; padding: 10px; }
-      button { width: 100%; margin: 6px 0; padding: 8px; }
-      .btn-secondary { background: #f5f5f5; border: 1px solid #ddd; }
-      .btn-success { background: #28a745; color: white; border: none; }
-      input, textarea { width: 100%; box-sizing: border-box; margin-top: 4px; }
-      .muted { color: #666; font-size: 12px; }
-      .info { font-size: 11px; color: #888; margin-top: 8px; }
+      :root {
+        --bg-start: #f6fbf8;
+        --bg-end: #ecf3ff;
+        --card: rgba(255, 255, 255, 0.92);
+        --line: #dbe6e0;
+        --text: #162120;
+        --muted: #5e6b67;
+        --brand: #0f8f76;
+        --brand-2: #0c6fbe;
+        --soft: #f3f8f6;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        width: 350px;
+        margin: 0;
+        padding: 12px;
+        color: var(--text);
+        background: linear-gradient(155deg, var(--bg-start) 0%, var(--bg-end) 100%);
+        font-family: "Avenir Next", "Segoe UI Variable", "Helvetica Neue", sans-serif;
+      }
+
+      .wrap {
+        position: relative;
+        border: 1px solid #dbe5ef;
+        border-radius: 16px;
+        padding: 14px;
+        background: var(--card);
+        box-shadow: 0 10px 24px rgba(27, 47, 62, 0.12);
+        overflow: hidden;
+      }
+
+      .wrap::before {
+        content: "";
+        position: absolute;
+        width: 160px;
+        height: 160px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(15, 143, 118, 0.12) 0%, rgba(15, 143, 118, 0) 70%);
+        top: -70px;
+        right: -30px;
+        pointer-events: none;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        letter-spacing: 0.2px;
+      }
+
+      .sub {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .row {
+        margin-bottom: 10px;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: #3d4b47;
+        margin-bottom: 5px;
+      }
+
+      input, select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        padding: 9px 10px;
+        font-size: 14px;
+        color: #1e2a27;
+        outline: none;
+      }
+
+      input:focus, select:focus {
+        border-color: #77b8ad;
+        box-shadow: 0 0 0 3px rgba(15, 143, 118, 0.12);
+      }
+
+      .grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .two-col {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      button {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid transparent;
+        padding: 10px 11px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:active {
+        transform: translateY(0);
+      }
+
+      #save {
+        background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+        color: #fff;
+        box-shadow: 0 6px 14px rgba(12, 111, 190, 0.26);
+      }
+
+      #pick, #run {
+        background: #fff;
+        border-color: #cad9d3;
+        color: #1d2a27;
+      }
+
+      #pick:hover, #run:hover {
+        background: var(--soft);
+      }
+
+      .btn-secondary {
+        background: #f7faf9;
+        border-color: #d8e4df;
+        color: #24312e;
+      }
+
+      .panel {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid #deebe6;
+        border-radius: 12px;
+        background: rgba(248, 251, 250, 0.88);
+      }
+
+      .batch-panel {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid #d9e7e2;
+        border-radius: 12px;
+        background: #f8fcfa;
+        display: none;
+      }
+
+      .batch-hint {
+        font-size: 12px;
+        color: #4a5b56;
+        margin-bottom: 8px;
+      }
+
+      .tab-list {
+        max-height: 160px;
+        overflow: auto;
+        border: 1px solid #dbe6e1;
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .tab-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 8px;
+        border-bottom: 1px solid #edf3f0;
+        font-size: 12px;
+      }
+
+      .tab-item:last-child { border-bottom: none; }
+      .tab-item.disabled { opacity: 0.55; }
+      .tab-item input { width: 14px; height: 14px; margin: 0; }
+      .tab-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tab-badge { font-size: 11px; color: #5f726c; }
+
+      .batch-actions {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .batch-actions button {
+        padding: 8px 8px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .batch-actions .ghost {
+        background: #fff;
+        border-color: #cad9d3;
+        color: #29413b;
+      }
+
+      .batch-actions .primary {
+        background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+        color: #fff;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .info {
+        color: #3f4f4a;
+        font-size: 12px;
+        min-height: 18px;
+        margin-bottom: 4px;
+      }
+
+      hr {
+        border: 0;
+        border-top: 1px dashed #d7e3de;
+        margin: 12px 0;
+      }
     </style>
   </head>
   <body>
-    <h3>Feishu Scroll OCR</h3>
-    <label>OCR.Space API Key (optional)</label>
-    <input id="apiKey" placeholder="helloworld or your key" />
-    <button id="save">Save Settings</button>
-    <hr style="border:0;border-top:1px solid #eee;margin:10px 0;">
-    <button id="pick">1) Select Region</button>
-    <button id="run">2) Capture + Extract</button>
-    <hr style="border:0;border-top:1px solid #eee;margin:10px 0;">
-    <button id="copy" class="btn-secondary">📋 Copy to Clipboard</button>
-    <button id="download" class="btn-secondary">💾 Download .txt</button>
-    <div class="info" id="info">No extraction yet</div>
-    <div class="muted" id="status"></div>
+    <div class="wrap">
+      <h3>Feishu Scroll OCR</h3>
+      <p class="sub">Clean extraction for Feishu docs</p>
+
+      <div class="row">
+        <label>OCR.Space API Key (optional)</label>
+        <input id="apiKey" placeholder="helloworld or your key" />
+      </div>
+
+      <div class="row">
+        <label>Language Mode</label>
+        <select id="languageMode">
+          <option value="auto">Auto (recommended)</option>
+          <option value="cn_strict">Chinese First</option>
+          <option value="bilingual">Keep All</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Region Size (WxH)</label>
+        <input id="regionSize" placeholder="800x600" />
+      </div>
+
+      <button id="save">Save Settings</button>
+
+      <hr>
+
+      <div class="grid two-col">
+        <button id="pick">Select</button>
+        <button id="run">Capture</button>
+      </div>
+
+      <div class="batch-panel" id="batchPanel">
+        <div class="batch-hint" id="batchHint">Choose tabs with selected region</div>
+        <div class="tab-list" id="tabList"></div>
+        <div class="batch-actions">
+          <button id="selectAllTabs" class="ghost">Select All</button>
+          <button id="clearTabs" class="ghost">Clear</button>
+          <button id="cancelBatch" class="ghost">Cancel</button>
+          <button id="startBatch" class="primary">Start Queue</button>
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="grid two-col">
+        <button id="copy" class="btn-secondary">Copy</button>
+        <button id="download" class="btn-secondary">Download</button>
+      </div>
+
+      <div class="panel">
+        <div class="info" id="info">No extraction yet</div>
+        <div class="muted" id="status"></div>
+      </div>
+    </div>
     <script src="popup.js"></script>
   </body>
 </html>
