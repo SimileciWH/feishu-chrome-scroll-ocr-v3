@@ -128,11 +128,13 @@ async function bootstrap() {
       setStatus('Getting extracted text...');
       const tab = await getActiveTab();
       const result = await safeSendMessage(tab.id, { type: 'GET_EXTRACTED_TEXT' });
-      if (!result.ok || !result.res?.text) {
+      // Response is direct, not wrapped in res
+      const text = result.ok ? (result.res?.text || result.text) : null;
+      if (!text) {
         setStatus('No extraction found. Run extraction first.', true);
         return;
       }
-      await navigator.clipboard.writeText(result.res.text);
+      await navigator.clipboard.writeText(text);
       setStatus('Copied to clipboard!');
     } catch (e) {
       setStatus('Copy failed: ' + String(e?.message || e), true);
@@ -145,11 +147,13 @@ async function bootstrap() {
       setStatus('Preparing download...');
       const tab = await getActiveTab();
       const result = await safeSendMessage(tab.id, { type: 'GET_EXTRACTED_TEXT' });
-      if (!result.ok || !result.res?.text) {
+      // Response is direct, not wrapped in res
+      const text = result.ok ? (result.res?.text || result.text) : null;
+      if (!text) {
         setStatus('No extraction found. Run extraction first.', true);
         return;
       }
-      const blob = new Blob([result.res.text], { type: 'text/plain' });
+      const blob = new Blob([text], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
       await chrome.downloads.download({ url, filename, saveAs: true });
