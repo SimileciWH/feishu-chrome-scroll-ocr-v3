@@ -68,7 +68,7 @@ async function getActiveTab() {
 
 async function sendToActiveTab(type) {
   try {
-    setStatus('Connecting...');
+    setStatus('Starting extraction...');
     const tab = await getActiveTab();
     const windowId = tab.windowId;
 
