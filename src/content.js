@@ -165,6 +165,12 @@ const UI = {
         width: box.offsetWidth,
         height: box.offsetHeight
       };
+      
+      // Also store in localStorage for persistence
+      try {
+        localStorage.setItem('feishu_ocr_selectedRect', JSON.stringify(selectedRect));
+      } catch (e) {}
+      
       // Hide control panel but keep box visible
       panel.remove();
       // Update overlay to show confirmed state
@@ -327,8 +333,25 @@ const OCR = {
 };
 
 async function runCaptureExtract() {
+  // Try to restore from localStorage if not set
   if (!selectedRect) {
-    alert('Please select region first.');
+    try {
+      const stored = localStorage.getItem('feishu_ocr_selectedRect');
+      if (stored) {
+        selectedRect = JSON.parse(stored);
+      }
+    } catch (e) {}
+  }
+  
+  if (!selectedRect) {
+    alert('Please select region first. Click "Select Region", choose area, then click Confirm.');
+    return;
+  }
+
+  if (!selectedRect.width || !selectedRect.height) {
+    alert('Invalid region. Please select region again.');
+    selectedRect = null;
+    try { localStorage.removeItem('feishu_ocr_selectedRect'); } catch (e) {}
     return;
   }
 
