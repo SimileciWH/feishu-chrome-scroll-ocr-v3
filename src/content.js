@@ -482,10 +482,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === 'SAVE_TEXT') {
     const blob = new Blob([msg.text || ''], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    chrome.downloads.download({ url, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    const reader = new FileReader();
+    reader.onload = () => {
+      chrome.downloads.download({ url: reader.result, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
+        .then(() => sendResponse({ ok: true }))
+        .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    };
+    reader.onerror = () => sendResponse({ ok: false, error: 'Failed to read blob' });
+    reader.readAsDataURL(blob);
     return true;
   }
 
