@@ -39,13 +39,21 @@ function ensureRequiredElements() {
 
 async function safeSendMessage(tabId, payload) {
   try {
-    const res = await chrome.tabs.sendMessage(tabId, payload);
+    // Add timeout to prevent hanging
+    const timeoutMs = 5000;
+    const res = await Promise.race([
+      chrome.tabs.sendMessage(tabId, payload),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
+    ]);
     return { ok: true, res };
   } catch (e) {
     const msg = String(e?.message || e);
     // Handle "receiving end does not exist" explicitly
     if (msg.includes('receiving end does not exist') || msg.includes('Could not establish connection')) {
       return { ok: false, error: 'Content script not loaded. Try reloading the page or the extension.' };
+    }
+    if (msg.includes('Timeout') || msg.includes('timeout')) {
+      return { ok: false, error: 'Connection timeout. Check if content script is loaded.' };
     }
     return { ok: false, error: msg };
   }
