@@ -345,6 +345,14 @@ const OCR = {
 };
 
 async function runCaptureExtract() {
+  // Send initial status to popup via both message and storage
+  try {
+    chrome.runtime.sendMessage({ type: 'EXTRACT_PROGRESS', progress: 'starting', iteration: 0 });
+    await chrome.storage.local.set({ 
+      extractProgress: { progress: 'starting', iteration: 0 }
+    });
+  } catch (e) {}
+
   // Try to restore from localStorage if not set
   if (!selectedRect) {
     try {
@@ -391,6 +399,23 @@ async function runCaptureExtract() {
 
   for (let i = 0; i < CONFIG.scroll.maxIterations; i += 1) {
     meta.iterations += 1;
+    
+    // Send progress update via both message and storage
+    try {
+      chrome.runtime.sendMessage({ 
+        type: 'EXTRACT_PROGRESS', 
+        progress: 'scrolling',
+        iteration: i,
+        message: `Scrolling... (${i + 1})`
+      });
+      await chrome.storage.local.set({ 
+        extractProgress: { 
+          progress: 'scrolling', 
+          iteration: i,
+          message: `正在滚动... (${i + 1})`
+        }
+      });
+    } catch (e) {}
 
     await Scroll.waitStableWindow();
 
@@ -450,7 +475,13 @@ async function runCaptureExtract() {
   await chrome.storage.local.set({ 
     extractedText: fullText,
     extractedMeta: meta,
-    extractedAt: Date.now()
+    extractedAt: Date.now(),
+    extractProgress: { 
+      progress: 'done', 
+      iteration: meta.iterations,
+      charCount: fullText.length,
+      message: `完成! ${meta.iterations} 次迭代`
+    }
   });
   
   await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: fullText, filename });
@@ -462,6 +493,17 @@ async function runCaptureExtract() {
   if (boxToRemove) boxToRemove.remove();
   if (overlayToRemove) overlayToRemove.remove();
   if (labelToRemove) labelToRemove.remove();
+  
+  // Send completion signal to popup
+  try {
+    chrome.runtime.sendMessage({ 
+      type: 'EXTRACT_PROGRESS', 
+      progress: 'done',
+      iterations: meta.iterations,
+      charCount: fullText.length,
+      message: `Done! ${meta.iterations} iterations`
+    });
+  } catch (e) {}
   
   alert(`Done! Text extracted. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }

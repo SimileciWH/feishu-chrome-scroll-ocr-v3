@@ -105,8 +105,11 @@ async function sendToActiveTab(type) {
     }
 
     setStatus(type === 'START_PICK_REGION' ? 'Region mode started' : 'Capture started');
-    // Don't close window immediately for extraction - let it run
-    if (!isExtraction) {
+    // For extraction, keep popup open and poll for progress
+    if (isExtraction) {
+      setStatus('Extraction started, waiting...');
+      pollProgress();
+    } else {
       setTimeout(() => window.close(), 800);
     }
   } catch (err) {
@@ -114,6 +117,48 @@ async function sendToActiveTab(type) {
     const errMsg = (err && err.message) ? err.message : (err ? String(err) : 'Unknown error');
     setStatus('Error: ' + errMsg, true);
   }
+}
+
+// Poll storage for extraction progress
+let progressPolling = null;
+function pollProgress() {
+  if (progressPolling) clearInterval(progressPolling);
+  
+  progressPolling = setInterval(async () => {
+    try {
+      const result = await chrome.storage.local.get(['extractProgress', 'extractedText']);
+      
+      if (result.extractProgress) {
+        const p = result.extractProgress;
+        if (p.progress === 'scrolling') {
+          setStatus(`正在滚动... (${p.iteration + 1})`);
+        } else if (p.progress === 'done') {
+          setStatus('提取完成! ' + (p.charCount ? `${p.charCount} 字符` : ''));
+          clearInterval(progressPolling);
+          progressPolling = null;
+        } else if (p.progress === 'starting') {
+          setStatus('正在启动...');
+        }
+      }
+      
+      // Also check if extraction is complete
+      if (result.extractedText) {
+        clearInterval(progressPolling);
+        progressPolling = null;
+      }
+    } catch (e) {
+      console.error('[popup] poll progress error:', e);
+    }
+  }, 1000);
+  
+  // Stop polling after 2 minutes
+  setTimeout(() => {
+    if (progressPolling) {
+      clearInterval(progressPolling);
+      progressPolling = null;
+      setStatus('提取超时 (2分钟)');
+    }
+  }, 120000);
 }
 
 async function bootstrap() {
@@ -183,3 +228,16 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+// Listen for progress updates from content script
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'EXTRACT_PROGRESS') {
+    if (msg.progress === 'starting') {
+      setStatus('Starting extraction...');
+    } else if (msg.progress === 'scrolling') {
+      setStatus(msg.message || 'Scrolling...');
+    } else if (msg.progress === 'done') {
+      setStatus('Extraction complete!');
+    }
+  }
+});
