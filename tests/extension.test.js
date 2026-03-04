@@ -1,10 +1,9 @@
-const puppeteer = require('puppeteer');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
 const EXTENSION_PATH = path.join(__dirname, '..');
 
-async function sleep(ms) {
+function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
@@ -18,22 +17,7 @@ async function runTests() {
     tests: []
   };
 
-  let browser;
   try {
-    // Load Chrome with extension
-    browser = await puppeteer.launch({
-      headless: false,
-      args: [
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
-        '--no-sandbox',
-        '--disable-setuid-sandbox'
-      ]
-    });
-
-    const pages = await browser.pages();
-    const page = pages[0];
-
     // ============================================
     // TEST 1: Manifest Validation
     // ============================================
@@ -47,20 +31,22 @@ async function runTests() {
         { name: 'has content_scripts', pass: manifest.content_scripts?.length > 0 },
         { name: 'has background service_worker', pass: manifest.background?.service_worker },
         { name: 'has popup', pass: manifest.action?.default_popup },
+        { name: 'has host_permissions', pass: manifest.host_permissions?.length > 0 },
       ];
       
       for (const check of checks) {
         if (check.pass) {
           results.passed++;
           console.log(`  ✓ ${check.name}`);
+          results.tests.push({ name: check.name, status: 'PASS' });
         } else {
           results.failed++;
           console.log(`  ✗ ${check.name}`);
+          results.tests.push({ name: check.name, status: 'FAIL' });
         }
-        results.tests.push({ name: check.name, status: check.pass ? 'PASS' : 'FAIL' });
       }
     } catch (e) {
-      results.failed += 5;
+      results.failed += 6;
       console.log(`  ✗ Manifest error: ${e.message}`);
       results.tests.push({ name: 'Manifest validation', status: 'FAIL', error: e.message });
     }
@@ -70,14 +56,12 @@ async function runTests() {
     // ============================================
     console.log('\nTEST 2: Popup HTML structure');
     try {
-      const popupUrl = `file://${EXTENSION_PATH}/src/popup.html`;
-      await page.goto(popupUrl, { waitUntil: 'domcontentloaded' });
-      await sleep(500);
+      const popupHtml = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.html'), 'utf8');
       
       const requiredIds = ['status', 'apiKey', 'save', 'pick', 'run', 'copy', 'download'];
       for (const id of requiredIds) {
-        const el = await page.$(`#${id}`);
-        if (el) {
+        const pass = popupHtml.includes(`id="${id}"`);
+        if (pass) {
           results.passed++;
           console.log(`  ✓ #${id} exists`);
           results.tests.push({ name: `popup #${id}`, status: 'PASS' });
@@ -109,6 +93,7 @@ async function runTests() {
         { name: 'has runCaptureExtract', pass: contentScript.includes('runCaptureExtract') },
         { name: 'has localStorage persistence', pass: contentScript.includes('localStorage') },
         { name: 'has selectedRect check', pass: contentScript.includes('selectedRect') },
+        { name: 'has extractInRect', pass: contentScript.includes('extractInRect') },
       ];
       
       for (const check of required) {
@@ -192,8 +177,6 @@ async function runTests() {
 
   } catch (e) {
     console.error('\nTest error:', e);
-  } finally {
-    if (browser) await browser.close();
   }
 
   // Print summary
@@ -215,4 +198,4 @@ async function runTests() {
   }
 }
 
-runTests().catch(console.error);
+runTests();

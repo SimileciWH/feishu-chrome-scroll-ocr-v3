@@ -1,6 +1,6 @@
 {
-  "name": "feishu-chrome-scroll-ocr-v3",
-  "version": "0.4.2",
+  "name": "feishu-chrome-scroll-ocr-v3-tests",
+  "version": "0.5.0",
   "description": "Tests for Feishu Chrome Scroll OCR Extension",
   "scripts": {
     "test": "node extension.test.js"
