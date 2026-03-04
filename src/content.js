@@ -31,34 +31,148 @@ const Util = {
 const UI = {
   makeOverlay() {
     const o = document.createElement('div');
-    o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;background:rgba(0,0,0,0.05)';
+    o.id = 'feishu-ocr-overlay';
+    o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.3)';
     document.body.appendChild(o);
     return o;
   },
-  rectFromPoints(a, b) {
-    const left = Math.min(a.x, b.x), top = Math.min(a.y, b.y);
-    return { left, top, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+
+  makeRegionBox(defaultW = 800, defaultH = 600) {
+    const box = document.createElement('div');
+    box.id = 'feishu-ocr-region-box';
+    box.style.cssText = `
+      position: fixed;
+      border: 2px solid #ff0000;
+      background: rgba(255, 0, 0, 0.1);
+      z-index: 2147483647;
+      resize: both;
+      overflow: hidden;
+      min-width: 100px;
+      min-height: 50px;
+    `;
+    // Center the box
+    const centerX = (window.innerWidth - defaultW) / 2;
+    const centerY = (window.innerHeight - defaultH) / 2;
+    box.style.left = `${Math.max(0, centerX)}px`;
+    box.style.top = `${Math.max(0, centerY)}px`;
+    box.style.width = `${defaultW}px`;
+    box.style.height = `${defaultH}px`;
+    return box;
   },
+
+  makeControlPanel(box) {
+    const panel = document.createElement('div');
+    panel.id = 'feishu-ocr-control-panel';
+    panel.style.cssText = `
+      position: fixed;
+      z-index: 2147483648;
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+    `;
+    panel.innerHTML = `
+      <div style="margin-bottom:8px;font-weight:bold;color:#333;">📐 Region Size</div>
+      <input type="text" id="feishu-ocr-size-input" placeholder="800x600" value="${box.style.width.replace('px','')}x${box.style.height.replace('px','')}"
+        style="width:100px;padding:4px;border:1px solid #ccc;border-radius:4px;">
+      <button id="feishu-ocr-confirm-btn" style="margin-left:8px;padding:4px 12px;background:#4f9fff;color:white;border:none;border-radius:4px;cursor:pointer;">Confirm</button>
+      <button id="feishu-ocr-cancel-btn" style="margin-left:4px;padding:4px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+      <div style="margin-top:8px;font-size:11px;color:#666;">Drag box edges to resize • Drag center to move</div>
+    `;
+    // Position panel below the box
+    const boxRect = box.getBoundingClientRect();
+    panel.style.left = `${boxRect.left}px`;
+    panel.style.top = `${boxRect.bottom + 10}px`;
+    return panel;
+  },
+
+  makeDraggable(box, panel) {
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+
+    // Drag to move
+    box.addEventListener('mousedown', (e) => {
+      if (e.target === box || e.target.style.cursor === 'move') {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = parseInt(box.style.left, 10);
+        startTop = parseInt(box.style.top, 10);
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let newLeft = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, startLeft + dx));
+      let newTop = Math.max(0, Math.min(window.innerHeight - box.offsetHeight, startTop + dy));
+      box.style.left = `${newLeft}px`;
+      box.style.top = `${newTop}px`;
+      // Update panel position
+      panel.style.left = `${newLeft}px`;
+      panel.style.top = `${newTop + box.offsetHeight + 10}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+  },
+
   pickRegion() {
     if (overlay) overlay.remove();
     overlay = UI.makeOverlay();
-    let start = null;
-    const box = document.createElement('div');
-    box.style.cssText = 'position:fixed;border:2px solid #4f9fff;background:rgba(79,159,255,0.2);pointer-events:none;z-index:2147483647';
+    
+    const defaultW = 800, defaultH = 600;
+    const box = UI.makeRegionBox(defaultW, defaultH);
     overlay.appendChild(box);
 
-    overlay.onmousedown = (e) => { start = { x: e.clientX, y: e.clientY }; };
-    overlay.onmousemove = (e) => {
-      if (!start) return;
-      const r = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
-      Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    };
-    overlay.onmouseup = (e) => {
-      if (!start) return;
-      selectedRect = UI.rectFromPoints(start, { x: e.clientX, y: e.clientY });
+    const panel = UI.makeControlPanel(box);
+    document.body.appendChild(panel);
+    UI.makeDraggable(box, panel);
+
+    const sizeInput = document.getElementById('feishu-ocr-size-input');
+    const confirmBtn = document.getElementById('feishu-ocr-confirm-btn');
+    const cancelBtn = document.getElementById('feishu-ocr-cancel-btn');
+
+    confirmBtn.onclick = () => {
+      selectedRect = {
+        left: parseInt(box.style.left, 10),
+        top: parseInt(box.style.top, 10),
+        width: box.offsetWidth,
+        height: box.offsetHeight
+      };
       overlay.remove();
       overlay = null;
-      alert('Region selected. Open extension popup and click "Capture + Extract".');
+      panel.remove();
+      alert(`Region selected: ${selectedRect.width}x${selectedRect.height}`);
+    };
+
+    cancelBtn.onclick = () => {
+      overlay.remove();
+      overlay = null;
+      panel.remove();
+      overlay = null;
+    };
+
+    sizeInput.onchange = () => {
+      const match = sizeInput.value.match(/^(\d+)\s*[x×]\s*(\d+)$/);
+      if (match) {
+        const w = Math.max(100, parseInt(match[1], 10));
+        const h = Math.max(50, parseInt(match[2], 10));
+        box.style.width = `${w}px`;
+        box.style.height = `${h}px`;
+        // Update panel position
+        panel.style.left = box.style.left;
+        panel.style.top = `${parseInt(box.style.top, 10) + h + 10}px`;
+      }
+    };
+
+    sizeInput.onkeydown = (e) => {
+      if (e.key === 'Enter') sizeInput.onchange();
     };
   }
 };
