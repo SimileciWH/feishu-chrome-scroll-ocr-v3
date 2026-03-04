@@ -408,9 +408,18 @@ async function runCaptureExtract() {
   meta.ocr_blocks = ocrBlocks.length;
 
   const footer = `\n\n# META\n${JSON.stringify(meta, null, 2)}`;
+  const fullText = merged + footer;
   const filename = `feishu-extract-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-  await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: merged + footer, filename });
-  alert(`Done. TXT saved via download. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
+  
+  // Store extracted text for popup access
+  await chrome.storage.local.set({ 
+    extractedText: fullText,
+    extractedMeta: meta,
+    extractedAt: Date.now()
+  });
+  
+  await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: fullText, filename });
+  alert(`Done! Text extracted. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
 }
 
 let isRunning = false;
@@ -454,6 +463,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.downloads.download({ url, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+
+  if (msg?.type === 'GET_EXTRACTED_TEXT') {
+    chrome.storage.local.get(['extractedText', 'extractedMeta', 'extractedAt'], (result) => {
+      sendResponse({ 
+        ok: true, 
+        text: result.extractedText || '',
+        meta: result.extractedMeta || null,
+        extractedAt: result.extractedAt || null
+      });
+    });
     return true;
   }
 
