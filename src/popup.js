@@ -37,10 +37,8 @@ function ensureRequiredElements() {
   return true;
 }
 
-async function safeSendMessage(tabId, payload) {
+async function safeSendMessage(tabId, payload, timeoutMs = 5000) {
   try {
-    // Add timeout to prevent hanging
-    const timeoutMs = 5000;
     const res = await Promise.race([
       chrome.tabs.sendMessage(tabId, payload),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs))
@@ -90,15 +88,27 @@ async function sendToActiveTab(type) {
       return;
     }
 
-    const sent = await safeSendMessage(tab.id, { type, windowId });
+    // For RUN_CAPTURE_EXTRACT, use longer timeout (60s) since extraction takes time
+    const isExtraction = type === 'RUN_CAPTURE_EXTRACT';
+    const timeoutMs = isExtraction ? 60000 : 5000;
+    
+    const sent = await safeSendMessage(tab.id, { type, windowId }, timeoutMs);
     if (!sent.ok) {
+      // For extraction, don't treat timeout as error - it's likely still running
+      if (isExtraction && sent.error.includes('timeout')) {
+        setStatus('Extraction started (may take a while)...');
+        return;
+      }
       const errMsg = (sent.error && sent.error.message) ? sent.error.message : String(sent.error || 'Send failed');
       setStatus('Send failed: ' + errMsg, true);
       return;
     }
 
-    setStatus(type === 'START_PICK_REGION' ? 'Region mode started' : 'Capture task started');
-    setTimeout(() => window.close(), 800);
+    setStatus(type === 'START_PICK_REGION' ? 'Region mode started' : 'Capture started');
+    // Don't close window immediately for extraction - let it run
+    if (!isExtraction) {
+      setTimeout(() => window.close(), 800);
+    }
   } catch (err) {
     console.error('[popup] sendToActiveTab error:', err);
     const errMsg = (err && err.message) ? err.message : (err ? String(err) : 'Unknown error');
