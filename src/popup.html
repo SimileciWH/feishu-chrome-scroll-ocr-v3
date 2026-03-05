@@ -61,7 +61,39 @@
       }
 
       .row {
-        margin-bottom: 10px;
+        margin-bottom: 8px;
+      }
+
+      .row.folder {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .folder-btn {
+        padding: 9px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #fff;
+        border: 1px solid #cad9d3;
+        color: #29413b;
+      }
+
+      .row.inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .row.inline label {
+        margin: 0;
+      }
+
+      .row.inline input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        margin: 0;
       }
 
       label {
@@ -161,7 +193,7 @@
       }
 
       .tab-list {
-        max-height: 160px;
+        max-height: 110px;
         overflow: auto;
         border: 1px solid #dbe6e1;
         border-radius: 8px;
@@ -222,7 +254,27 @@
       hr {
         border: 0;
         border-top: 1px dashed #d7e3de;
-        margin: 12px 0;
+        margin: 10px 0;
+      }
+
+      details.settings {
+        margin-top: 8px;
+        border: 1px solid #dce8e3;
+        border-radius: 10px;
+        padding: 6px 8px;
+        background: #f8fcfa;
+      }
+
+      details.settings summary {
+        cursor: pointer;
+        color: #35514b;
+        font-size: 12px;
+        font-weight: 600;
+        outline: none;
+      }
+
+      details.settings[open] summary {
+        margin-bottom: 6px;
       }
     </style>
   </head>
@@ -231,33 +283,57 @@
       <h3>Feishu Scroll OCR</h3>
       <p class="sub">Clean extraction for Feishu docs</p>
 
-      <div class="row">
-        <label>OCR.Space API Key (optional)</label>
-        <input id="apiKey" placeholder="helloworld or your key" />
-      </div>
-
-      <div class="row">
-        <label>Language Mode</label>
-        <select id="languageMode">
-          <option value="auto">Auto (recommended)</option>
-          <option value="cn_strict">Chinese First</option>
-          <option value="bilingual">Keep All</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <label>Region Size (WxH)</label>
-        <input id="regionSize" placeholder="800x600" />
-      </div>
-
-      <button id="save">Save Settings</button>
-
-      <hr>
-
       <div class="grid two-col">
         <button id="pick">Select</button>
         <button id="run">Capture</button>
       </div>
+
+      <details class="settings">
+        <summary>Settings</summary>
+
+        <div class="row">
+          <label>Language Mode</label>
+          <select id="languageMode">
+            <option value="auto">Auto (recommended)</option>
+            <option value="cn_strict">Chinese First</option>
+            <option value="bilingual">Keep All</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label>Region Size (WxH)</label>
+          <input id="regionSize" placeholder="800x600" />
+        </div>
+
+        <div class="row inline">
+          <input id="autoDownload" type="checkbox" />
+          <label for="autoDownload">Auto Download after extract</label>
+        </div>
+
+        <div class="row">
+          <label>Auto Download Folder</label>
+          <div class="row folder" style="margin:0;">
+            <select id="downloadFolderMode">
+              <option value="">Downloads root</option>
+              <option value="FeishuOCR">Downloads/FeishuOCR</option>
+              <option value="Documents/FeishuOCR">Downloads/Documents/FeishuOCR</option>
+              <option value="Desktop/FeishuOCR">Downloads/Desktop/FeishuOCR</option>
+              <option value="custom">Custom...</option>
+            </select>
+            <button id="applyFolder" class="folder-btn" type="button">Apply</button>
+          </div>
+          <input id="downloadFolder" placeholder="Custom relative path (e.g. Work/FeishuOCR)" style="margin-top:8px;display:none;" />
+        </div>
+
+        <div class="row">
+          <label>OCR.Space API Key (optional)</label>
+          <input id="apiKey" placeholder="helloworld or your key" />
+        </div>
+
+        <button id="save">Save Settings</button>
+      </details>
+
+      <hr>
 
       <div class="batch-panel" id="batchPanel">
         <div class="batch-hint" id="batchHint">Choose tabs with selected region</div>
@@ -279,6 +355,7 @@
 
       <div class="panel">
         <div class="info" id="info">No extraction yet</div>
+        <div class="muted" id="queueStats">Queue: idle</div>
         <div class="muted" id="status"></div>
       </div>
     </div>
