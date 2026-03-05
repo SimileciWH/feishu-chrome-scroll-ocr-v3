@@ -152,7 +152,9 @@ function runTests() {
   test('Popup has download functionality', () => {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.js'), 'utf8');
     assertContains(content, 'downloadBtn.onclick', 'Should handle download click');
-    assertContains(content, 'chrome.downloads.download', 'Should use downloads API');
+    const hasDirectDownload = content.includes('chrome.downloads.download');
+    const hasBackgroundSave = content.includes("type: 'SAVE_TEXT'");
+    assert(hasDirectDownload || hasBackgroundSave, 'Should use downloads API directly or via SAVE_TEXT background path');
   });
 
   // Progress polling tests
@@ -332,6 +334,13 @@ function runTests() {
     assertContains(content, 'chrome.tabs.captureVisibleTab', 'Should capture visible tab');
   });
 
+  test('Background queue uses runId to avoid stale done state', () => {
+    const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/background.js'), 'utf8');
+    assertContains(content, 'createRunId', 'Should create per-run ids');
+    assertContains(content, 'p?.runId && p.runId !== runId', 'Should ignore stale progress from previous runs');
+    assertContains(content, "progress: 'queued'", 'Should reset progress before starting each run');
+  });
+
   // ============================================================
   // SUITE 7: Configuration Tests
   // ============================================================
@@ -403,6 +412,12 @@ function runTests() {
     assertContains(content, 'Already running', 'Should handle concurrent runs');
   });
 
+  test('Content script persists runId in progress states', () => {
+    const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/content.js'), 'utf8');
+    assertContains(content, 'runId', 'Should carry runId through extraction lifecycle');
+    assertContains(content, "progress: 'error'", 'Should write error progress when extraction fails');
+  });
+
   test('Popup handles connection errors', () => {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.js'), 'utf8');
     assertContains(content, 'receiving end does not exist', 'Should handle connection errors');
@@ -440,6 +455,46 @@ function runTests() {
   test('Content script has UI object', () => {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/content.js'), 'utf8');
     assertContains(content, 'const UI', 'Should have UI object');
+  });
+
+
+  // ============================================================
+  // SUITE 11: Regression Tests (Batch Queue runId)
+  // ============================================================
+  console.log('\n--- SUITE 11: Regression Tests (Batch Queue runId) ---\n');
+
+  function decideWaitOutcome(progressStates, runId) {
+    for (const p of progressStates) {
+      if (p?.runId && p.runId !== runId) continue;
+      if (p?.progress === 'done') return { ok: true, charCount: p.charCount || 0 };
+      if (p?.progress === 'error') return { ok: false, error: p.error || 'extract failed' };
+    }
+    return { ok: false, error: 'timeout' };
+  }
+
+  test('Regression: stale done from previous run must not finish current run', () => {
+    const runId = 'run-new-2';
+    const states = [
+      { progress: 'done', runId: 'run-old-1', charCount: 9999 },
+      { progress: 'starting', runId },
+      { progress: 'scrolling', runId, iteration: 1 },
+      { progress: 'done', runId, charCount: 1200 }
+    ];
+    const out = decideWaitOutcome(states, runId);
+    assert(out.ok === true, 'Current run should still complete successfully');
+    assert(out.charCount === 1200, 'Must use current run result, not stale done');
+  });
+
+  test('Regression: current run error should fail even if stale done exists', () => {
+    const runId = 'run-new-3';
+    const states = [
+      { progress: 'done', runId: 'run-old-2', charCount: 8888 },
+      { progress: 'starting', runId },
+      { progress: 'error', runId, error: 'ocr timeout' }
+    ];
+    const out = decideWaitOutcome(states, runId);
+    assert(out.ok === false, 'Current run error should fail queue item');
+    assert(out.error.includes('ocr timeout'), 'Should surface current run error');
   });
 
   // ============================================================

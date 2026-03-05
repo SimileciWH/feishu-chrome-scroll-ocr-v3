@@ -94,6 +94,24 @@ function getDocTitleForFilename() {
   return '';
 }
 
+function buildDownloadPath(filename, folder) {
+  const safeFilename = sanitizeFilenamePart(filename).replace(/\.txt$/i, '') + '.txt';
+  const dir = String(folder || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/*/, '')
+    .replace(/\.\./g, '')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+    .trim();
+  if (!dir) return safeFilename;
+  const safeDir = dir
+    .split('/')
+    .map((p) => sanitizeFilenamePart(p))
+    .filter(Boolean)
+    .join('/');
+  return safeDir ? `${safeDir}/${safeFilename}` : safeFilename;
+}
+
 const UI = {
   minWidth: 100,
   minHeight: 50,
@@ -579,14 +597,14 @@ const OCR = {
   }
 };
 
-async function runCaptureExtract(tabId) {
+async function runCaptureExtract(tabId, runId) {
   const storageKeys = getExtractStorageKeys(tabId);
   const regionKey = getRegionStorageKey(tabId);
   // Send initial status to popup via both message and storage
   try {
     chrome.runtime.sendMessage({ type: 'EXTRACT_PROGRESS', progress: 'starting', iteration: 0 });
     await chrome.storage.local.set({ 
-      [storageKeys.progress]: { progress: 'starting', iteration: 0 }
+      [storageKeys.progress]: { progress: 'starting', iteration: 0, runId }
     });
   } catch (e) {}
 
@@ -595,14 +613,6 @@ async function runCaptureExtract(tabId) {
     try {
       const scoped = await chrome.storage.local.get([regionKey]);
       if (scoped?.[regionKey]) selectedRect = scoped[regionKey];
-    } catch (e) {}
-  }
-  if (!selectedRect) {
-    try {
-      const stored = localStorage.getItem('feishu_ocr_selectedRect');
-      if (stored) {
-        selectedRect = JSON.parse(stored);
-      }
     } catch (e) {}
   }
   if (!selectedRect) {
@@ -626,7 +636,7 @@ async function runCaptureExtract(tabId) {
 
   const startedAtMs = Date.now();
   const scroller = Scroll.findContainer();
-  const { ocrApiKey, languageMode } = await chrome.storage.local.get(['ocrApiKey', 'languageMode']);
+  const { ocrApiKey, languageMode, autoDownload, downloadFolder } = await chrome.storage.local.get(['ocrApiKey', 'languageMode', 'autoDownload', 'downloadFolder']);
   const effectiveLanguageMode = ['auto', 'cn_strict', 'bilingual'].includes(languageMode) ? languageMode : 'auto';
 
   const domBlocksRaw = [];
@@ -662,6 +672,7 @@ async function runCaptureExtract(tabId) {
         [storageKeys.progress]: { 
           progress: 'scrolling', 
           iteration: i,
+          runId,
           message: `正在滚动... (${i + 1})`
         }
       });
@@ -730,7 +741,8 @@ async function runCaptureExtract(tabId) {
   const fullText = merged + footer;
   const title = getDocTitleForFilename();
   const fallbackTs = new Date().toISOString().replace(/[:.]/g, '-');
-  const filename = title ? `${title}.txt` : `feishu-extract-${fallbackTs}.txt`;
+  const filename = sanitizeFilenamePart(title || `feishu-extract-${fallbackTs}`) + '.txt';
+  const outputPath = buildDownloadPath(filename, downloadFolder);
   
   // Store extracted text for popup access
   await chrome.storage.local.set({ 
@@ -741,12 +753,15 @@ async function runCaptureExtract(tabId) {
     [storageKeys.progress]: { 
       progress: 'done', 
       iteration: meta.iterations,
+      runId,
       charCount: fullText.length,
       message: `完成! ${meta.iterations} 次迭代`
     }
   });
   
-  await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: fullText, filename });
+  if (autoDownload !== false) {
+    await chrome.runtime.sendMessage({ type: 'SAVE_TEXT', text: fullText, filename: outputPath, saveAs: false });
+  }
   
   // Hide the red box and overlay after extraction
   const boxToRemove = document.getElementById('feishu-ocr-region-box');
@@ -767,7 +782,7 @@ async function runCaptureExtract(tabId) {
     });
   } catch (e) {}
   
-  alert(`Done! Text extracted. iterations=${meta.iterations}, elapsed=${meta.elapsed_seconds}s`);
+  // no blocking alert: popup status panel shows iterations/char count.
 }
 
 let isRunning = false;
@@ -810,16 +825,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg?.type === 'RUN_CAPTURE_EXTRACT') {
+    const storageKeys = getExtractStorageKeys(msg?.tabId);
     if (isRunning) {
       sendResponse({ ok: false, error: 'Already running' });
-      return true;
+      return false;
     }
     isRunning = true;
-    runCaptureExtract(msg?.tabId)
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }))
+    const runId = msg?.runId || `${Date.now()}_${msg?.tabId || 'tab'}`;
+    sendResponse({ ok: true, started: true, runId });
+    runCaptureExtract(msg?.tabId, runId)
+      .catch(async (e) => {
+        console.error('[feishu-ocr] capture failed:', e);
+        try {
+          await chrome.storage.local.set({
+            [storageKeys.progress]: {
+              progress: 'error',
+              runId,
+              error: String(e?.message || e || 'extract failed')
+            }
+          });
+        } catch (_) {}
+      })
       .finally(() => { isRunning = false; });
-    return true; // async response
+    return false;
   }
 
   if (msg?.type === 'CAPTURE_VISIBLE') {
@@ -829,16 +857,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Keep this handler for compatibility with existing tests/tooling.
   if (msg?.type === 'SAVE_TEXT') {
-    const blob = new Blob([msg.text || ''], { type: 'text/plain' });
-    const reader = new FileReader();
-    reader.onload = () => {
-      chrome.downloads.download({ url: reader.result, filename: msg.filename || 'feishu-extract.txt', saveAs: true })
-        .then(() => sendResponse({ ok: true }))
-        .catch((e) => sendResponse({ ok: false, error: String(e) }));
-    };
-    reader.onerror = () => sendResponse({ ok: false, error: 'Failed to read blob' });
-    reader.readAsDataURL(blob);
+    sendResponse({ ok: false, error: 'SAVE_TEXT is handled by background worker.' });
     return true;
   }
 
