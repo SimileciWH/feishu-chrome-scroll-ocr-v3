@@ -152,7 +152,9 @@ function runTests() {
   test('Popup has download functionality', () => {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/popup.js'), 'utf8');
     assertContains(content, 'downloadBtn.onclick', 'Should handle download click');
-    assertContains(content, 'chrome.downloads.download', 'Should use downloads API');
+    const hasDirectDownload = content.includes('chrome.downloads.download');
+    const hasBackgroundSave = content.includes("type: 'SAVE_TEXT'");
+    assert(hasDirectDownload || hasBackgroundSave, 'Should use downloads API directly or via SAVE_TEXT background path');
   });
 
   // Progress polling tests
@@ -332,6 +334,13 @@ function runTests() {
     assertContains(content, 'chrome.tabs.captureVisibleTab', 'Should capture visible tab');
   });
 
+  test('Background queue uses runId to avoid stale done state', () => {
+    const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/background.js'), 'utf8');
+    assertContains(content, 'createRunId', 'Should create per-run ids');
+    assertContains(content, 'p?.runId && p.runId !== runId', 'Should ignore stale progress from previous runs');
+    assertContains(content, "progress: 'queued'", 'Should reset progress before starting each run');
+  });
+
   // ============================================================
   // SUITE 7: Configuration Tests
   // ============================================================
@@ -401,6 +410,12 @@ function runTests() {
     const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/content.js'), 'utf8');
     assertContains(content, 'isRunning', 'Should have isRunning flag');
     assertContains(content, 'Already running', 'Should handle concurrent runs');
+  });
+
+  test('Content script persists runId in progress states', () => {
+    const content = fs.readFileSync(path.join(EXTENSION_PATH, 'src/content.js'), 'utf8');
+    assertContains(content, 'runId', 'Should carry runId through extraction lifecycle');
+    assertContains(content, "progress: 'error'", 'Should write error progress when extraction fails');
   });
 
   test('Popup handles connection errors', () => {
